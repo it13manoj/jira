@@ -314,7 +314,8 @@ const handleRegister = async () => {
   } catch (error) {
     Notify.create({
       type: 'negative',
-      message: error.response?.data?.message || 'Registration failed',
+      message:
+        error.response?.data?.message || 'Registration failed. chaeck again',
       position: 'top'
     })
   } finally {
