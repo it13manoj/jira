@@ -1105,9 +1105,7 @@ const rejectPr = async () => {
 const loadSavedConfig = async () => {
   try {
     loadingConfig.value = true
-    const { data } = await api.get('/users/git/config', {
-      params: { userId: config.value.userId }
-    })
+    const { data } = await api.get('/users/git/config')
 
     if (data?.success && data.config) {
       const saved = data.config
