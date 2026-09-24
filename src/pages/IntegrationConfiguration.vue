@@ -1102,29 +1102,40 @@ const rejectPr = async () => {
  * If a record exists, pre-fills the form fields.
  * If no record exists (new user), leaves fields blank.
  */
+// ─── 0. Load Saved Configuration from DB (on mount) ───────────────────────
 const loadSavedConfig = async () => {
   try {
     loadingConfig.value = true
     const { data } = await api.get('/users/git/config')
 
-    if (data?.success && data.config) {
-      const saved = data.config
-      // Only overwrite fields that have a real saved value
-      if (saved.gitToken) config.value.token = saved.gitToken
-      if (saved.geminiApiKey) config.value.geminiApiKey = saved.geminiApiKey
-      if (saved.repoPath) config.value.repository = saved.repoPath
-      if (saved.provider) config.value.provider = saved.provider
-      if (saved.defaultBranch) config.value.defaultBranch = saved.defaultBranch
+    // Handle both wrapped response ({ success: true, config: {} }) and raw entity response
+    const saved = data?.config || data
 
-      // If credentials were already saved, mark as connected and load PRs
-      if (saved.gitToken && saved.repoPath) {
+    if (
+      saved &&
+      (saved.repoPath || saved.gitToken || saved.encryptedGitToken)
+    ) {
+      // Map API values into Vue form model
+      if (saved.gitToken) {
+        config.value.token = saved.gitToken
+      }
+      if (saved.geminiApiKey) {
+        config.value.geminiApiKey = saved.geminiApiKey
+      }
+      if (saved.repoPath) {
+        config.value.repository = saved.repoPath
+      }
+      if (saved.userId) {
+        config.value.userId = String(saved.userId)
+      }
+
+      // Mark connected if core values exist
+      if (config.value.token && config.value.repository) {
         isconnected.value = true
         await fetchPullRequests()
       }
     }
-    // If data.success is false or no config → leave form blank (new user)
   } catch (err) {
-    // 404 or empty config → fine, just leave form blank for new setup
     if (err.response?.status !== 404) {
       console.warn('Could not load saved git config:', err.message)
     }
@@ -1132,7 +1143,6 @@ const loadSavedConfig = async () => {
     loadingConfig.value = false
   }
 }
-
 // ─── 1. Save Configuration ─────────────────────────────────────────────────
 const saveConfiguration = async () => {
   const valid = await configFormRef.value?.validate()
