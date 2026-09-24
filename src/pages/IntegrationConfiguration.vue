@@ -1016,11 +1016,7 @@ const clearReview = () => {
   rejectReason.value = ''
 }
 
-// ─── 5b. Reject Confirmation ──────────────────────────────────────────────
-/**
- * Opens the reject dialog. No pre-conditions needed —
- * a reviewer can reject without first running AI review.
- */
+// ─── Rejection confirmation & submission ──────────────────────────────────
 const confirmReject = () => {
   if (!selectedPr.value) return
   rejectReason.value = ''
@@ -1028,14 +1024,6 @@ const confirmReject = () => {
   showRejectDialog.value = true
 }
 
-// ─── 5c. Reject PR ────────────────────────────────────────────────────────
-/**
- * Validates the rejection reason, then calls POST /users/git/reject-pr.
- * The backend is expected to:
- *   1. Post the rejection reason as a comment on the PR.
- *   2. Close the PR without merging.
- * Falls back to just closing if comment posting fails.
- */
 const rejectPr = async () => {
   // Validate textarea inside dialog
   const valid = await rejectReasonRef.value?.validate()
@@ -1096,41 +1084,23 @@ const rejectPr = async () => {
   }
 }
 
-// ─── 0. Load Saved Configuration from DB (on mount) ───────────────────────
-/**
- * Fetches the user's saved git token, gemini key, and repo from the backend.
- * If a record exists, pre-fills the form fields.
- * If no record exists (new user), leaves fields blank.
- */
-// ─── 0. Load Saved Configuration from DB (on mount) ───────────────────────
+// ─── 0. Load Saved Configuration ───────────────────────────────────────────
 const loadSavedConfig = async () => {
   try {
     loadingConfig.value = true
-    const { data } = await api.get('/users/git/config')
+    const { data } = await api.get('/users/git/config', {
+      params: { userId: config.value.userId }
+    })
 
-    // Handle both wrapped response ({ success: true, config: {} }) and raw entity response
-    const saved = data?.config || data
+    if (data?.success && data.config) {
+      const saved = data.config
+      if (saved.gitToken) config.value.token = saved.gitToken
+      if (saved.geminiApiKey) config.value.geminiApiKey = saved.geminiApiKey
+      if (saved.repoPath) config.value.repository = saved.repoPath
+      if (saved.provider) config.value.provider = saved.provider
+      if (saved.defaultBranch) config.value.defaultBranch = saved.defaultBranch
 
-    if (
-      saved &&
-      (saved.repoPath || saved.gitToken || saved.encryptedGitToken)
-    ) {
-      // Map API values into Vue form model
-      if (saved.gitToken) {
-        config.value.token = saved.gitToken
-      }
-      if (saved.geminiApiKey) {
-        config.value.geminiApiKey = saved.geminiApiKey
-      }
-      if (saved.repoPath) {
-        config.value.repository = saved.repoPath
-      }
-      if (saved.userId) {
-        config.value.userId = String(saved.userId)
-      }
-
-      // Mark connected if core values exist
-      if (config.value.token && config.value.repository) {
+      if (saved.gitToken && saved.repoPath) {
         isconnected.value = true
         await fetchPullRequests()
       }
@@ -1143,6 +1113,7 @@ const loadSavedConfig = async () => {
     loadingConfig.value = false
   }
 }
+
 // ─── 1. Save Configuration ─────────────────────────────────────────────────
 const saveConfiguration = async () => {
   const valid = await configFormRef.value?.validate()
@@ -1170,7 +1141,6 @@ const saveConfiguration = async () => {
           response.data.message || 'Configuration & Keys saved successfully!',
         position: 'top'
       })
-      // Auto-load PRs after saving
       await fetchPullRequests()
     }
   } catch (error) {
@@ -1289,11 +1259,11 @@ const fetchPullRequests = async () => {
   }
 }
 
-// ─── 4. AI Code Review (and optional Merge) ────────────────────────────────
+// ─── 4. AI Code Review & Merge ─────────────────────────────────────────────
 const reviewPr = async action => {
   if (!selectedPr.value) return
 
-  showMergeDialog.value = false // close dialog if open
+  showMergeDialog.value = false
 
   const isMerge = action === 'merge'
   if (isMerge) {
@@ -1367,20 +1337,30 @@ const reviewPr = async action => {
 }
 
 /**
- * Parse the backend review response into a structured object.
- * Backend may return a plain string or a JSON object.
+ * Safely parse the backend review response.
+ * Handles objects, standard text, and JSON string responses.
  */
 const parseReview = raw => {
   if (!raw) return null
 
-  if (typeof raw === 'object') {
+  let parsed = raw
+  if (typeof raw === 'string') {
+    try {
+      parsed = JSON.parse(raw)
+    } catch {
+      // Not JSON string, fall through to raw string handling
+    }
+  }
+
+  if (typeof parsed === 'object' && parsed !== null) {
     return {
-      approved: raw.approved ?? (raw.score != null ? raw.score >= 7 : false),
-      score: raw.score ?? null,
-      issues: raw.issues ?? [],
-      suggestions: raw.suggestions ?? [],
+      approved:
+        parsed.approved ?? (parsed.score != null ? parsed.score >= 7 : false),
+      score: parsed.score ?? null,
+      issues: parsed.issues ?? [],
+      suggestions: parsed.suggestions ?? [],
       rawFeedback:
-        raw.rawFeedback ?? raw.feedback ?? JSON.stringify(raw, null, 2)
+        parsed.rawFeedback ?? parsed.feedback ?? JSON.stringify(parsed, null, 2)
     }
   }
 
