@@ -1,0 +1,1 @@
+import{j as e,rt as t}from"./QIcon-Cv2FigCq.js";var n=e({name:`QSpace`,setup(){let e=t(`div`,{class:`q-space`});return()=>e}});export{n as t};
