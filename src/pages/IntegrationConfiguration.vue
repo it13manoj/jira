@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <q-page class="q-pa-lg bg-slate-900 text-white min-h-screen">
     <!-- Page Header -->
     <div class="row items-center justify-between q-mb-lg">
@@ -27,7 +27,32 @@
     <!-- ══════════════════════════════════════════════════════════ -->
     <!-- Row 1 — Configuration Panel                              -->
     <!-- ══════════════════════════════════════════════════════════ -->
-    <div class="row q-col-gutter-lg q-mb-lg">
+
+    <!-- Loading saved config skeleton -->
+    <div v-if="loadingConfig" class="row q-col-gutter-lg q-mb-lg">
+      <div class="col-12 col-lg-8">
+        <q-card class="bg-slate-800 border-glass rounded-card">
+          <q-card-section class="q-gutter-sm">
+            <q-skeleton dark type="text" width="40%" height="24px" />
+            <q-skeleton dark type="rect" height="48px" />
+            <q-skeleton dark type="rect" height="48px" />
+            <q-skeleton dark type="rect" height="48px" />
+            <q-skeleton dark type="rect" height="48px" />
+          </q-card-section>
+        </q-card>
+      </div>
+      <div class="col-12 col-lg-4">
+        <q-card class="bg-slate-800 border-glass rounded-card">
+          <q-card-section class="q-gutter-sm">
+            <q-skeleton dark type="text" width="60%" height="24px" />
+            <q-skeleton dark type="rect" height="80px" />
+            <q-skeleton dark type="rect" height="60px" />
+          </q-card-section>
+        </q-card>
+      </div>
+    </div>
+
+    <div v-else class="row q-col-gutter-lg q-mb-lg">
       <!-- Left Column: Provider & Authentication Settings -->
       <div class="col-12 col-lg-8">
         <q-card
@@ -159,15 +184,26 @@
 
               <div class="row q-col-gutter-md">
                 <div class="col-12 col-md-6">
-                  <q-select
+                  <q-input
                     dark
                     outlined
                     dense
                     v-model="config.repository"
-                    :options="repositoryOptions"
-                    label="Default Repository"
-                    hint="Select from accessible repositories"
-                  />
+                    label="Repository (owner/repo)"
+                    placeholder="e.g. it13manoj/batohi"
+                    hint="Type any GitHub/GitLab/Bitbucket repository path"
+                    :rules="[
+                      val => !!val || 'Repository path is required',
+                      val =>
+                        /^[^/]+\/[^/]+$/.test(val?.trim()) ||
+                        'Format must be owner/repo'
+                    ]"
+                    clearable
+                  >
+                    <template #prepend>
+                      <q-icon name="source" color="grey-5" />
+                    </template>
+                  </q-input>
                 </div>
                 <div class="col-12 col-md-6">
                   <q-input
@@ -514,7 +550,11 @@
                   label="Review with Gemini AI"
                   no-caps
                   :loading="reviewingPr"
-                  :disable="merging"
+                  :disable="
+                    merging ||
+                    rejecting ||
+                    ['merged', 'closed', 'rejected'].includes(selectedPr.status)
+                  "
                   @click="reviewPr('review')"
                 />
 
@@ -526,7 +566,11 @@
                   label="Review & Merge"
                   no-caps
                   :loading="merging"
-                  :disable="reviewingPr || selectedPr.status === 'merged'"
+                  :disable="
+                    reviewingPr ||
+                    rejecting ||
+                    ['merged', 'closed', 'rejected'].includes(selectedPr.status)
+                  "
                   @click="confirmMerge"
                 >
                   <q-tooltip
@@ -537,7 +581,27 @@
                   </q-tooltip>
                 </q-btn>
 
-                <!-- Dismiss / clear -->
+                <!-- Reject Merge Request -->
+                <q-btn
+                  unelevated
+                  color="negative"
+                  icon="do_not_disturb_on"
+                  label="Reject"
+                  no-caps
+                  :loading="rejecting"
+                  :disable="
+                    reviewingPr ||
+                    merging ||
+                    ['merged', 'closed', 'rejected'].includes(selectedPr.status)
+                  "
+                  @click="confirmReject"
+                >
+                  <q-tooltip class="bg-slate-900 text-white">
+                    Close this PR without merging and leave a rejection comment.
+                  </q-tooltip>
+                </q-btn>
+
+                <!-- Dismiss / clear selection -->
                 <q-btn
                   flat
                   color="grey-5"
@@ -546,6 +610,28 @@
                   no-caps
                   @click="clearReview"
                 />
+              </div>
+
+              <!-- Already-closed status notice -->
+              <div
+                v-if="
+                  ['merged', 'closed', 'rejected'].includes(selectedPr.status)
+                "
+                class="row items-center q-gutter-x-xs q-mt-sm"
+              >
+                <q-icon
+                  :name="
+                    selectedPr.status === 'merged' ? 'check_circle' : 'cancel'
+                  "
+                  :color="
+                    selectedPr.status === 'merged' ? 'positive' : 'negative'
+                  "
+                  size="16px"
+                />
+                <span class="text-caption text-grey-4 text-capitalize">
+                  This PR is already <strong>{{ selectedPr.status }}</strong> —
+                  no further actions available.
+                </span>
               </div>
             </q-card-section>
 
@@ -702,6 +788,26 @@
                   </template>
                   {{ mergeResult.message }}
                 </q-banner>
+
+                <!-- Reject result banner -->
+                <q-banner
+                  v-if="rejectResult"
+                  :class="
+                    rejectResult.success ? 'bg-deep-orange-9' : 'bg-negative'
+                  "
+                  text-color="white"
+                  rounded
+                  class="q-mt-md"
+                >
+                  <template #avatar>
+                    <q-icon
+                      :name="
+                        rejectResult.success ? 'do_not_disturb_on' : 'error'
+                      "
+                    />
+                  </template>
+                  {{ rejectResult.message }}
+                </q-banner>
               </div>
             </q-card-section>
           </template>
@@ -741,37 +847,115 @@
         </q-card-actions>
       </q-card>
     </q-dialog>
+
+    <!-- ══════════════════════════════════════════════════════════ -->
+    <!-- Reject Confirmation Dialog                                -->
+    <!-- ══════════════════════════════════════════════════════════ -->
+    <q-dialog v-model="showRejectDialog" persistent>
+      <q-card
+        class="bg-slate-800 text-white"
+        style="min-width: 420px; max-width: 520px"
+      >
+        <q-card-section class="row items-center q-pb-none">
+          <q-avatar
+            icon="do_not_disturb_on"
+            color="negative"
+            text-color="white"
+          />
+          <span class="q-ml-sm text-h6">Reject Pull Request</span>
+        </q-card-section>
+
+        <q-card-section class="text-grey-3">
+          You are about to
+          <strong class="text-negative">reject and close</strong> PR
+          <strong>#{{ selectedPr?.number }}</strong>
+          <em>{{ selectedPr?.title }}</em> on branch
+          <strong>{{ selectedPr?.head }}</strong
+          >. <br /><br />
+          A rejection comment will be posted to the PR before it is closed.
+        </q-card-section>
+
+        <!-- Rejection Reason -->
+        <q-card-section class="q-pt-none">
+          <q-input
+            dark
+            outlined
+            dense
+            autogrow
+            v-model="rejectReason"
+            type="textarea"
+            label="Rejection Reason *"
+            placeholder="e.g. Code quality issues found in the diff — see AI review comments above."
+            hint="This message will be posted as a comment on the PR."
+            :rules="[val => !!val?.trim() || 'A rejection reason is required']"
+            counter
+            maxlength="500"
+            ref="rejectReasonRef"
+          />
+        </q-card-section>
+
+        <q-card-actions align="right" class="q-pt-none q-px-md q-pb-md">
+          <q-btn
+            flat
+            label="Cancel"
+            color="grey-5"
+            v-close-popup
+            no-caps
+            :disable="rejecting"
+          />
+          <q-btn
+            unelevated
+            color="negative"
+            icon="do_not_disturb_on"
+            label="Confirm Reject"
+            no-caps
+            :loading="rejecting"
+            @click="rejectPr"
+          />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
   </q-page>
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { Notify, copyToClipboard } from 'quasar'
 import { api } from '@/boot/axios'
 
 // ─── UI state ──────────────────────────────────────────────────────────────
 const isconnected = ref(false)
+const loadingConfig = ref(false) // true while fetching saved config on mount
 const testing = ref(false)
 const saving = ref(false)
 const loadingPrs = ref(false)
 const reviewingPr = ref(false)
 const merging = ref(false)
+const rejecting = ref(false)
 const showToken = ref(false)
 const showGeminiKey = ref(false)
 const showMergeDialog = ref(false)
+const showRejectDialog = ref(false)
 
 // ─── Config ────────────────────────────────────────────────────────────────
 const configFormRef = ref(null)
+const rejectReasonRef = ref(null)
 const webhookUrl = ref('https://api.wdpcare.com/api/v1/users/git/webhook')
 
+// userId read from localStorage (set during login)
+const userId =
+  localStorage.getItem('userId') ||
+  localStorage.getItem('user_id') ||
+  'user_123'
+
 const config = ref({
-  userId: 'user_123', // populate from user store / auth state
+  userId,
   provider: 'github',
   authType: 'pat',
   hostUrl: 'https://github.com',
-  token: '',
-  geminiApiKey: '',
-  repository: 'it13manoj/batohi',
+  token: '', // pre-filled from DB on mount
+  geminiApiKey: '', // pre-filled from DB on mount
+  repository: '', // pre-filled from DB on mount (blank if new)
   defaultBranch: 'main',
   autoDeploy: true,
   syncLogs: true,
@@ -779,21 +963,19 @@ const config = ref({
   isSelfHosted: false
 })
 
-const repositoryOptions = ref([
-  'it13manoj/batohi',
-  'acme-org/backend-api',
-  'acme-org/infrastructure-terraform'
-])
-
 // ─── Pull Request state ────────────────────────────────────────────────────
 const pullRequests = ref([])
 const selectedPr = ref(null)
 const reviewResult = ref(null)
 const mergeResult = ref(null)
+const rejectResult = ref(null)
+const rejectReason = ref('')
 
-/** A review must have been run and the result not rejected before allowing merge */
+/** A review must have been run and the PR must still be open before allowing merge */
 const canMerge = computed(
-  () => !!reviewResult.value && selectedPr.value?.status !== 'merged'
+  () =>
+    !!reviewResult.value &&
+    !['merged', 'closed', 'rejected'].includes(selectedPr.value?.status)
 )
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
@@ -802,6 +984,7 @@ const prStatusColor = status => {
     open: 'positive',
     merged: 'purple-7',
     closed: 'negative',
+    rejected: 'deep-orange-7',
     draft: 'grey-6'
   }
   return map[status] ?? 'grey-6'
@@ -821,12 +1004,135 @@ const selectPr = pr => {
   selectedPr.value = pr
   reviewResult.value = null
   mergeResult.value = null
+  rejectResult.value = null
+  rejectReason.value = ''
 }
 
 const clearReview = () => {
   selectedPr.value = null
   reviewResult.value = null
   mergeResult.value = null
+  rejectResult.value = null
+  rejectReason.value = ''
+}
+
+// ─── 5b. Reject Confirmation ──────────────────────────────────────────────
+/**
+ * Opens the reject dialog. No pre-conditions needed —
+ * a reviewer can reject without first running AI review.
+ */
+const confirmReject = () => {
+  if (!selectedPr.value) return
+  rejectReason.value = ''
+  rejectResult.value = null
+  showRejectDialog.value = true
+}
+
+// ─── 5c. Reject PR ────────────────────────────────────────────────────────
+/**
+ * Validates the rejection reason, then calls POST /users/git/reject-pr.
+ * The backend is expected to:
+ *   1. Post the rejection reason as a comment on the PR.
+ *   2. Close the PR without merging.
+ * Falls back to just closing if comment posting fails.
+ */
+const rejectPr = async () => {
+  // Validate textarea inside dialog
+  const valid = await rejectReasonRef.value?.validate()
+  if (valid === false) return
+
+  showRejectDialog.value = false
+  rejecting.value = true
+  rejectResult.value = null
+
+  try {
+    const { data } = await api.post('/users/git/reject-pr', {
+      userId: config.value.userId,
+      gitToken: config.value.token,
+      repoPath: config.value.repository?.trim(),
+      pullNumber: selectedPr.value.number,
+      rejectReason: rejectReason.value.trim()
+    })
+
+    if (data.success) {
+      rejectResult.value = {
+        success: true,
+        message:
+          data.message ||
+          `PR #${selectedPr.value.number} has been rejected and closed.`
+      }
+      // Update status locally
+      const idx = pullRequests.value.findIndex(
+        p => p.number === selectedPr.value.number
+      )
+      if (idx !== -1) {
+        pullRequests.value[idx].status = 'rejected'
+        selectedPr.value = { ...selectedPr.value, status: 'rejected' }
+      }
+      Notify.create({
+        type: 'warning',
+        icon: 'do_not_disturb_on',
+        message: `PR #${selectedPr.value.number} rejected and closed.`,
+        position: 'top'
+      })
+    } else {
+      rejectResult.value = {
+        success: false,
+        message: data.error || 'Failed to reject the pull request.'
+      }
+      Notify.create({
+        type: 'negative',
+        message: data.error || 'Reject operation failed.',
+        position: 'top'
+      })
+    }
+  } catch (error) {
+    const msg =
+      error.response?.data?.message || error.message || 'Reject failed'
+    rejectResult.value = { success: false, message: msg }
+    Notify.create({ type: 'negative', message: msg, position: 'top' })
+  } finally {
+    rejecting.value = false
+  }
+}
+
+// ─── 0. Load Saved Configuration from DB (on mount) ───────────────────────
+/**
+ * Fetches the user's saved git token, gemini key, and repo from the backend.
+ * If a record exists, pre-fills the form fields.
+ * If no record exists (new user), leaves fields blank.
+ */
+const loadSavedConfig = async () => {
+  try {
+    loadingConfig.value = true
+    const { data } = await api.get('/users/git/config', {
+      params: { userId: config.value.userId }
+    })
+
+    if (data?.success && data.config) {
+      const saved = data.config
+      // Only overwrite fields that have a real saved value
+      if (saved.gitToken) config.value.token = saved.gitToken
+      if (saved.geminiApiKey) config.value.geminiApiKey = saved.geminiApiKey
+      if (saved.repoPath) config.value.repository = saved.repoPath
+      if (saved.provider) config.value.provider = saved.provider
+      if (saved.defaultBranch) config.value.defaultBranch = saved.defaultBranch
+
+      // If credentials were already saved, mark as connected and load PRs
+      if (saved.gitToken && saved.repoPath) {
+        isconnected.value = true
+        await fetchPullRequests()
+      }
+    }
+    // If data.success is false or no config → leave form blank (new user)
+  } catch (err) {
+    // 404 or empty config → fine, just leave form blank for new setup
+    if (err.response?.status !== 404) {
+      console.warn('Could not load saved git config:', err.message)
+    }
+  } finally {
+    loadingConfig.value = false
+  }
 }
 
 // ─── 1. Save Configuration ─────────────────────────────────────────────────
@@ -839,9 +1145,11 @@ const saveConfiguration = async () => {
 
     const payload = {
       userId: config.value.userId,
-      repoPath: config.value.repository,
+      repoPath: config.value.repository?.trim(),
       gitToken: config.value.token,
-      geminiApiKey: config.value.geminiApiKey
+      geminiApiKey: config.value.geminiApiKey,
+      provider: config.value.provider,
+      defaultBranch: config.value.defaultBranch
     }
 
     const response = await api.post('/users/git/save-config', payload)
@@ -879,14 +1187,23 @@ const testConnection = async () => {
     })
     return
   }
+  if (!config.value.repository?.trim()) {
+    Notify.create({
+      type: 'warning',
+      message: 'Enter a repository path first.',
+      position: 'top'
+    })
+    return
+  }
   try {
     testing.value = true
-    // Re-use save-config to verify credentials
     const response = await api.post('/users/git/save-config', {
       userId: config.value.userId,
-      repoPath: config.value.repository,
+      repoPath: config.value.repository?.trim(),
       gitToken: config.value.token,
-      geminiApiKey: config.value.geminiApiKey
+      geminiApiKey: config.value.geminiApiKey,
+      provider: config.value.provider,
+      defaultBranch: config.value.defaultBranch
     })
 
     if (response.data?.success) {
@@ -927,7 +1244,7 @@ const fetchPullRequests = async () => {
     const { data } = await api.post('/users/git/pull-requests', {
       userId: config.value.userId,
       gitToken: config.value.token,
-      repoPath: config.value.repository
+      repoPath: config.value.repository?.trim()
     })
 
     if (data.success) {
@@ -985,13 +1302,12 @@ const reviewPr = async action => {
       userId: config.value.userId,
       gitToken: config.value.token,
       geminiKey: config.value.geminiApiKey,
-      repoPath: config.value.repository,
+      repoPath: config.value.repository?.trim(),
       pullNumber: selectedPr.value.number,
       action
     })
 
     if (data.success) {
-      // Parse structured review response (backend may return raw string or object)
       reviewResult.value = parseReview(data.reviewFeedback ?? data.review)
 
       if (isMerge) {
@@ -1001,7 +1317,6 @@ const reviewPr = async action => {
             data.mergeMessage ||
             `PR #${selectedPr.value.number} merged successfully into ${selectedPr.value.base}!`
         }
-        // Update status locally
         const idx = pullRequests.value.findIndex(
           p => p.number === selectedPr.value.number
         )
@@ -1050,7 +1365,6 @@ const reviewPr = async action => {
 const parseReview = raw => {
   if (!raw) return null
 
-  // Already an object
   if (typeof raw === 'object') {
     return {
       approved: raw.approved ?? (raw.score != null ? raw.score >= 7 : false),
@@ -1062,7 +1376,6 @@ const parseReview = raw => {
     }
   }
 
-  // Plain string response — surface it as raw feedback
   const text = String(raw)
   const approved = /looks? good|approve|LGTM/i.test(text)
   return {
@@ -1114,6 +1427,11 @@ const copyWebhook = () => {
       })
     )
 }
+
+// ─── Lifecycle ───────────────────────────────────────────────────────────
+onMounted(() => {
+  loadSavedConfig()
+})
 </script>
 
 <style scoped>
