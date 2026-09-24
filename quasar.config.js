@@ -10,7 +10,7 @@ export default defineConfig(ctx => {
 
     build: {
       target: {},
-      vueRouterMode: 'hash',
+      vueRouterMode: 'history',
       env: {
         API_URL: ctx.dev
           ? 'http://localhost:9091/api/v1'
