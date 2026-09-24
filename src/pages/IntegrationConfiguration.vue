@@ -291,7 +291,7 @@ const loadingPrs = ref(false)
 const showToken = ref(false)
 const showGeminiKey = ref(false)
 
-const webhookUrl = ref('https://your-domain.com/api/v1/users/git/webhook')
+const webhookUrl = ref('https://api.wdpcare.com/api/v1/users/git/webhook')
 
 const config = ref({
   userId: 'user_123', // Can be populated dynamically from user state
