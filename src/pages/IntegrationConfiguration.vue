@@ -71,6 +71,7 @@
               active-color="primary"
               indicator-color="primary"
               align="justify"
+              @update:model-value="onProviderChange"
             >
               <q-tab name="github" icon="code" label="GitHub" />
               <q-tab name="gitlab" icon="account_tree" label="GitLab" />
@@ -122,8 +123,8 @@
                   dense
                   v-model="config.token"
                   :type="showToken ? 'text' : 'password'"
-                  label="GitHub Personal Access Token *"
-                  hint="Requires repo access to fetch diffs"
+                  :label="`${providerName} Access Token *`"
+                  hint="Requires access to the selected repository and Git operations below."
                   :rules="[val => !!val || 'Token is required']"
                   class="q-mb-md"
                 >
@@ -177,6 +178,20 @@
                 </div>
               </template>
 
+              <q-banner dense rounded class="bg-slate-900 text-grey-3">
+                <template #avatar>
+                  <q-icon name="lock" color="amber" />
+                </template>
+                <div class="text-weight-medium text-white q-mb-xs">
+                  Required provider access
+                </div>
+                {{ providerAccessGuidance }}
+                <div class="text-caption text-grey-5 q-mt-xs">
+                  Access is also subject to the token owner's permissions and
+                  the target account, organization, or workspace policy.
+                </div>
+              </q-banner>
+
               <!-- Repository & Branch Settings -->
               <div class="text-subtitle1 text-weight-medium q-pt-sm"
                 >Repository Settings</div
@@ -184,26 +199,46 @@
 
               <div class="row q-col-gutter-md">
                 <div class="col-12 col-md-6">
-                  <q-input
+                  <q-select
                     dark
                     outlined
                     dense
                     v-model="config.repository"
-                    label="Repository (owner/repo)"
-                    placeholder="e.g. it13manoj/batohi"
-                    hint="Type any GitHub/GitLab/Bitbucket repository path"
+                    :options="filteredRepositories"
+                    label="Select Repository *"
+                    hint="Choose a repository from the connected provider or enter its path."
+                    use-input
+                    fill-input
+                    hide-selected
+                    input-debounce="0"
+                    :loading="loadingRepositories"
                     :rules="[
                       val => !!val || 'Repository path is required',
                       val =>
-                        /^[^/]+\/[^/]+$/.test(val?.trim()) ||
-                        'Format must be owner/repo'
+                        /^[^/]+\/.+$/.test(val?.trim()) ||
+                        'Use the namespace/repository format'
                     ]"
                     clearable
+                    @filter="filterRepositories"
+                    @new-value="addRepositoryOption"
                   >
                     <template #prepend>
                       <q-icon name="source" color="grey-5" />
                     </template>
-                  </q-input>
+                    <template #append>
+                      <q-btn
+                        flat
+                        round
+                        dense
+                        icon="refresh"
+                        aria-label="Refresh repositories"
+                        :loading="loadingRepositories"
+                        @click.stop="loadRepositories"
+                      >
+                        <q-tooltip>Refresh repositories</q-tooltip>
+                      </q-btn>
+                    </template>
+                  </q-select>
                 </div>
                 <div class="col-12 col-md-6">
                   <q-input
@@ -290,6 +325,156 @@
                 </q-item-section>
               </q-item>
             </q-list>
+          </q-card-section>
+        </q-card>
+
+        <!-- Branch Creation -->
+        <q-card
+          class="bg-slate-800 text-white border-glass rounded-card q-mb-md"
+        >
+          <q-card-section>
+            <div class="text-h6 text-weight-bold q-mb-xs">Create Branch</div>
+            <p class="text-caption text-grey-4">
+              Create a branch from the selected repository.
+            </p>
+            <q-form
+              ref="createBranchFormRef"
+              class="q-gutter-y-sm"
+              @submit.prevent="createBranch"
+            >
+              <q-input
+                :model-value="config.repository || ''"
+                dark
+                outlined
+                dense
+                readonly
+                label="Selected Repository"
+                placeholder="Choose a repository first"
+              />
+              <q-input
+                v-model="newBranch.name"
+                dark
+                outlined
+                dense
+                label="New branch name *"
+                placeholder="feature/my-change"
+                :rules="[
+                  val => !!val?.trim() || 'Branch name is required',
+                  val =>
+                    !/\s|\.\.|~|\^|:|\?|\*|\[|\\/.test(val?.trim()) ||
+                    'Branch name contains unsupported characters'
+                ]"
+              />
+              <q-input
+                v-model="newBranch.sourceBranch"
+                dark
+                outlined
+                dense
+                label="Create from branch *"
+                :rules="[val => !!val?.trim() || 'Source branch is required']"
+              />
+              <div class="row justify-end q-pt-sm">
+                <q-btn
+                  color="primary"
+                  icon="account_tree"
+                  label="Create Branch"
+                  type="submit"
+                  unelevated
+                  no-caps
+                  :loading="creatingBranch"
+                  :disable="!config.token || !config.repository"
+                />
+              </div>
+            </q-form>
+          </q-card-section>
+        </q-card>
+
+        <!-- Repository Creation -->
+        <q-card
+          class="bg-slate-800 text-white border-glass rounded-card q-mb-md"
+        >
+          <q-card-section>
+            <div class="text-h6 text-weight-bold q-mb-xs">
+              Create Repository
+            </div>
+            <p class="text-caption text-grey-4">
+              Create a repository in an account or namespace you can manage.
+            </p>
+
+            <q-form
+              ref="createRepositoryFormRef"
+              class="q-gutter-y-sm"
+              @submit.prevent="createRepository"
+            >
+              <q-input
+                v-model="newRepository.namespace"
+                dark
+                outlined
+                dense
+                :label="`${repositoryNamespaceLabel} *`"
+                :hint="`For example: ${config.provider === 'bitbucket' ? 'my-workspace' : 'my-account or my-group/subgroup'}`"
+                :rules="[
+                  val => !!val?.trim() || 'Account or namespace is required',
+                  val =>
+                    /^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*$/.test(
+                      val?.trim()
+                    ) || 'Enter a valid account or namespace path'
+                ]"
+              />
+              <q-input
+                v-model="newRepository.name"
+                dark
+                outlined
+                dense
+                label="Repository name *"
+                :rules="[
+                  val => !!val?.trim() || 'Repository name is required',
+                  val =>
+                    /^[A-Za-z0-9._-]+$/.test(val?.trim()) ||
+                    'Use letters, numbers, dots, underscores, or hyphens'
+                ]"
+              />
+              <q-input
+                v-model="newRepository.description"
+                dark
+                outlined
+                dense
+                type="textarea"
+                autogrow
+                label="Description"
+              />
+              <q-select
+                v-model="newRepository.visibility"
+                :options="repositoryVisibilityOptions"
+                dark
+                outlined
+                dense
+                emit-value
+                map-options
+                label="Visibility"
+              />
+              <q-toggle
+                v-model="newRepository.initializeReadme"
+                dark
+                color="positive"
+                label="Initialize with a README"
+              />
+              <div class="row justify-end q-pt-sm">
+                <q-btn
+                  color="primary"
+                  icon="create_new_folder"
+                  label="Create Repository"
+                  type="submit"
+                  unelevated
+                  no-caps
+                  :loading="creatingRepository"
+                  :disable="!config.token"
+                />
+              </div>
+              <div v-if="!config.token" class="text-caption text-amber">
+                Connect with a token that has repository-creation access first.
+              </div>
+            </q-form>
           </q-card-section>
         </q-card>
 
@@ -928,6 +1113,9 @@ const isconnected = ref(false)
 const loadingConfig = ref(false) // true while fetching saved config on mount
 const testing = ref(false)
 const saving = ref(false)
+const creatingRepository = ref(false)
+const loadingRepositories = ref(false)
+const creatingBranch = ref(false)
 const loadingPrs = ref(false)
 const reviewingPr = ref(false)
 const merging = ref(false)
@@ -939,6 +1127,8 @@ const showRejectDialog = ref(false)
 
 // ─── Config ────────────────────────────────────────────────────────────────
 const configFormRef = ref(null)
+const createRepositoryFormRef = ref(null)
+const createBranchFormRef = ref(null)
 const rejectReasonRef = ref(null)
 const webhookUrl = ref('https://api.wdpcare.com/api/v1/users/git/webhook')
 
@@ -961,6 +1151,49 @@ const config = ref({
   syncLogs: true,
   autoReview: false,
   isSelfHosted: false
+})
+
+const providerName = computed(() => {
+  const names = { github: 'GitHub', gitlab: 'GitLab', bitbucket: 'Bitbucket' }
+  return names[config.value.provider] ?? 'Git'
+})
+
+const repositoryNamespaceLabel = computed(() => {
+  const labels = {
+    github: 'Owner',
+    gitlab: 'Namespace',
+    bitbucket: 'Workspace'
+  }
+  return labels[config.value.provider] ?? 'Owner or namespace'
+})
+
+const repositoryVisibilityOptions = [
+  { label: 'Private', value: 'private' },
+  { label: 'Public', value: 'public' }
+]
+
+const newRepository = ref({
+  namespace: '',
+  name: '',
+  description: '',
+  visibility: 'private',
+  initializeReadme: true
+})
+
+const repositoryOptions = ref([])
+const filteredRepositories = ref([])
+const newBranch = ref({ name: '', sourceBranch: 'main' })
+
+const providerAccessGuidance = computed(() => {
+  const guidance = {
+    github:
+      'Grant access to the target repository, pull requests (read/write), and webhooks if managed from this panel. Creating repositories also requires repository-creation access for the selected account or organization.',
+    gitlab:
+      'Grant the api scope for repository/project, merge-request, and webhook API operations. Creating a repository requires project-creation permission in the target namespace.',
+    bitbucket:
+      'Grant repository read/write, pull-request read/write, and webhook access. Creating a repository also requires create-repository access in the target workspace or project.'
+  }
+  return guidance[config.value.provider] ?? guidance.github
 })
 
 // ─── Pull Request state ────────────────────────────────────────────────────
@@ -1098,10 +1331,20 @@ const loadSavedConfig = async () => {
       if (saved.geminiApiKey) config.value.geminiApiKey = saved.geminiApiKey
       if (saved.repoPath) config.value.repository = saved.repoPath
       if (saved.provider) config.value.provider = saved.provider
+      config.value.hostUrl =
+        saved.hostUrl ||
+        {
+          github: 'https://github.com',
+          gitlab: 'https://gitlab.com',
+          bitbucket: 'https://bitbucket.org'
+        }[config.value.provider] ||
+        config.value.hostUrl
       if (saved.defaultBranch) config.value.defaultBranch = saved.defaultBranch
+      newBranch.value.sourceBranch = saved.defaultBranch || 'main'
 
       if (saved.gitToken && saved.repoPath) {
         isconnected.value = true
+        await loadRepositories()
         await fetchPullRequests()
       }
     }
@@ -1141,6 +1384,7 @@ const saveConfiguration = async () => {
           response.data.message || 'Configuration & Keys saved successfully!',
         position: 'top'
       })
+      await loadRepositories()
       await fetchPullRequests()
     }
   } catch (error) {
@@ -1191,6 +1435,7 @@ const testConnection = async () => {
         message: 'Connection verified!',
         position: 'top'
       })
+      await loadRepositories()
       await fetchPullRequests()
     }
   } catch (error) {
@@ -1202,6 +1447,219 @@ const testConnection = async () => {
     })
   } finally {
     testing.value = false
+  }
+}
+
+const onProviderChange = provider => {
+  config.value.repository = ''
+  config.value.hostUrl =
+    {
+      github: 'https://github.com',
+      gitlab: 'https://gitlab.com',
+      bitbucket: 'https://bitbucket.org'
+    }[provider] || ''
+  isconnected.value = false
+  pullRequests.value = []
+  clearReview()
+  repositoryOptions.value = []
+  filteredRepositories.value = []
+  if (config.value.token) loadRepositories()
+}
+
+const filterRepositories = (searchText, update) => {
+  const search = searchText.trim().toLowerCase()
+  update(() => {
+    filteredRepositories.value = search
+      ? repositoryOptions.value.filter(repository =>
+          repository.toLowerCase().includes(search)
+        )
+      : [...repositoryOptions.value]
+  })
+}
+
+const addRepositoryOption = (value, done) => {
+  const repository = value.trim()
+  if (!repository) {
+    done()
+    return
+  }
+  if (!repositoryOptions.value.includes(repository)) {
+    repositoryOptions.value.unshift(repository)
+  }
+  filteredRepositories.value = [...repositoryOptions.value]
+  done(repository, 'add-unique')
+}
+
+const loadRepositories = async () => {
+  if (!config.value.token) return
+
+  try {
+    loadingRepositories.value = true
+    const { data } = await api.post('/users/git/repositories', {
+      userId: config.value.userId,
+      provider: config.value.provider,
+      hostUrl: config.value.hostUrl,
+      gitToken: config.value.token
+    })
+    if (!data?.success) {
+      throw new Error(data?.error || 'Failed to load repositories.')
+    }
+
+    const repositories = (data.repositories ?? data.repos ?? [])
+      .map(repository => {
+        if (typeof repository === 'string') return repository.trim()
+        const fullPath =
+          repository.fullName ||
+          repository.full_name ||
+          repository.pathWithNamespace ||
+          repository.path_with_namespace ||
+          repository.path
+        if (fullPath) return fullPath.trim()
+        const namespace =
+          repository.owner?.login ||
+          repository.owner?.username ||
+          repository.workspace?.slug ||
+          repository.namespace?.path ||
+          repository.namespace
+        return [namespace, repository.name || repository.slug]
+          .filter(Boolean)
+          .join('/')
+      })
+      .filter(Boolean)
+
+    if (
+      config.value.repository &&
+      !repositories.includes(config.value.repository)
+    ) {
+      repositories.unshift(config.value.repository)
+    }
+    repositoryOptions.value = [...new Set(repositories)]
+    filteredRepositories.value = [...repositoryOptions.value]
+  } catch (error) {
+    Notify.create({
+      type: 'negative',
+      message:
+        error.response?.data?.message ||
+        error.response?.data?.error ||
+        error.message ||
+        'Failed to load repositories.',
+      position: 'top'
+    })
+  } finally {
+    loadingRepositories.value = false
+  }
+}
+
+// ─── 2. Create Repository ─────────────────────────────────────────────────
+const createRepository = async () => {
+  const valid = await createRepositoryFormRef.value?.validate()
+  if (valid === false) return
+  if (!config.value.token) {
+    Notify.create({
+      type: 'warning',
+      message:
+        'Connect a provider token with repository-creation access first.',
+      position: 'top'
+    })
+    return
+  }
+
+  try {
+    creatingRepository.value = true
+    const { data } = await api.post('/users/git/create-repository', {
+      userId: config.value.userId,
+      provider: config.value.provider,
+      hostUrl: config.value.hostUrl,
+      gitToken: config.value.token,
+      namespace: newRepository.value.namespace.trim(),
+      repositoryName: newRepository.value.name.trim(),
+      description: newRepository.value.description.trim(),
+      visibility: newRepository.value.visibility,
+      initializeReadme: newRepository.value.initializeReadme
+    })
+
+    if (!data?.success) {
+      throw new Error(data?.error || 'Repository creation failed.')
+    }
+
+    const repoPath =
+      data.repoPath ||
+      data.repository?.fullName ||
+      data.repository?.pathWithNamespace ||
+      data.repository?.full_name ||
+      `${newRepository.value.namespace.trim()}/${newRepository.value.name.trim()}`
+    config.value.repository = repoPath
+    if (!repositoryOptions.value.includes(repoPath)) {
+      repositoryOptions.value.unshift(repoPath)
+    }
+    filteredRepositories.value = [...repositoryOptions.value]
+    Notify.create({
+      type: 'positive',
+      message: `${repoPath} created. Save Configuration to connect it to Git workflows.`,
+      timeout: 5000,
+      position: 'top'
+    })
+  } catch (error) {
+    const status = error.response?.status
+    const message =
+      status === 403
+        ? 'Repository creation was denied. Check the token and account or namespace permissions.'
+        : error.response?.data?.message ||
+          error.response?.data?.error ||
+          error.message ||
+          'Repository creation failed.'
+    Notify.create({ type: 'negative', message, position: 'top' })
+  } finally {
+    creatingRepository.value = false
+  }
+}
+
+const createBranch = async () => {
+  const valid = await createBranchFormRef.value?.validate()
+  if (valid === false) return
+  if (!config.value.repository || !config.value.token) {
+    Notify.create({
+      type: 'warning',
+      message: 'Select a repository and connect a provider token first.',
+      position: 'top'
+    })
+    return
+  }
+
+  try {
+    creatingBranch.value = true
+    const { data } = await api.post('/users/git/create-branch', {
+      userId: config.value.userId,
+      provider: config.value.provider,
+      hostUrl: config.value.hostUrl,
+      gitToken: config.value.token,
+      repoPath: config.value.repository.trim(),
+      branchName: newBranch.value.name.trim(),
+      sourceBranch: newBranch.value.sourceBranch.trim()
+    })
+    if (!data?.success) {
+      throw new Error(data?.error || 'Branch creation failed.')
+    }
+
+    Notify.create({
+      type: 'positive',
+      message:
+        data.message ||
+        `Branch ${newBranch.value.name.trim()} created in ${config.value.repository}.`,
+      position: 'top'
+    })
+    newBranch.value.name = ''
+  } catch (error) {
+    const message =
+      error.response?.status === 403
+        ? 'Branch creation was denied. Check that the token has write access to this repository.'
+        : error.response?.data?.message ||
+          error.response?.data?.error ||
+          error.message ||
+          'Branch creation failed.'
+    Notify.create({ type: 'negative', message, position: 'top' })
+  } finally {
+    creatingBranch.value = false
   }
 }
 
