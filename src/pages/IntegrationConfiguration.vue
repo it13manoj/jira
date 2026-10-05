@@ -1408,15 +1408,13 @@
               Loading file from repository...
             </div>
           </div>
-          <textarea
+          <CodeEditor
             v-else
             v-model="repositoryFile.content"
-            class="source-editor-input col"
+            :language="repositoryFile.path"
+            :readonly="committingRepositoryFile"
             aria-label="Repository file editor"
-            spellcheck="false"
-            autocapitalize="off"
-            autocomplete="off"
-            :disabled="committingRepositoryFile"
+            class="col"
           />
         </q-card-section>
         <q-separator dark />
@@ -1709,6 +1707,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { Notify, copyToClipboard } from 'quasar'
 import { api } from '@/boot/axios'
+import CodeEditor from '@/components/CodeEditor.vue'
 
 // ─── UI state ──────────────────────────────────────────────────────────────
 const isconnected = ref(false)
@@ -3234,30 +3233,6 @@ onMounted(() => {
   font-size: 12px;
   line-height: 1.7;
   white-space: pre;
-}
-.source-editor-input {
-  width: 100%;
-  min-height: 58vh;
-  resize: vertical;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 4px;
-  outline: none;
-  padding: 16px;
-  background: #111827;
-  color: #e5e7eb;
-  font-family: 'Cascadia Code', Consolas, 'Courier New', monospace;
-  font-size: 13px;
-  line-height: 1.6;
-  tab-size: 2;
-  white-space: pre;
-  overflow: auto;
-}
-.source-editor-input:focus {
-  border-color: #60a5fa;
-  box-shadow: 0 0 0 1px #60a5fa;
-}
-.source-editor-input:disabled {
-  opacity: 0.65;
 }
 .repository-list-scroll {
   max-height: 360px;
