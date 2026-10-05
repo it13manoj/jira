@@ -66,10 +66,6 @@ const routes = [
       {
         path: '/configuration',
         component: () => import('@/pages/ConfigurationPage.vue')
-      },
-      {
-        path: '/git-configuration',
-        component: () => import('@/pages/GitSetup.vue')
       }
     ]
   }
