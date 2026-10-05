@@ -233,7 +233,7 @@
                         icon="refresh"
                         aria-label="Refresh repositories"
                         :loading="loadingRepositories"
-                        @click.stop="loadRepositories"
+                        @click.stop="loadRepositories(true)"
                       >
                         <q-tooltip>Refresh repositories</q-tooltip>
                       </q-btn>
@@ -274,6 +274,675 @@
             </q-form>
           </q-card-section>
         </q-card>
+        <div class="row items-center justify-between q-mt-lg q-mb-sm">
+          <div>
+            <div class="text-h6 text-weight-bold">Pull Request Review</div>
+            <div class="text-caption text-grey-4">
+              Review changes, run an AI check, and merge when ready.
+            </div>
+          </div>
+          <q-chip
+            color="blue-grey-9"
+            text-color="grey-3"
+            icon="merge_type"
+            :label="`${pullRequests.length} open`"
+          />
+        </div>
+        <div class="row q-col-gutter-lg q-mb-lg">
+          <!-- ── Pull Requests List ── -->
+          <div class="col-12 col-lg-5">
+            <q-card
+              class="bg-slate-800 text-white border-glass rounded-card full-height-card pr-workspace-card"
+            >
+              <q-card-section class="row items-center justify-between q-pb-sm">
+                <div>
+                  <div class="text-h6 text-weight-bold">Open Pull Requests</div>
+                  <div class="text-caption text-grey-5">
+                    {{ pullRequests.length }} awaiting review
+                  </div>
+                </div>
+                <q-btn
+                  flat
+                  round
+                  dense
+                  color="white"
+                  icon="refresh"
+                  :loading="loadingPrs"
+                  @click="fetchPullRequests"
+                >
+                  <q-tooltip class="bg-slate-900 text-white"
+                    >Refresh PRs</q-tooltip
+                  >
+                </q-btn>
+              </q-card-section>
+
+              <!-- Empty / not connected state -->
+              <q-card-section v-if="!isconnected" class="text-center q-py-xl">
+                <q-icon name="link_off" size="48px" color="grey-6" />
+                <p class="text-grey-5 q-mt-sm">
+                  Save your configuration first to load Pull Requests.
+                </p>
+              </q-card-section>
+
+              <!-- Loading skeleton -->
+              <q-card-section v-else-if="loadingPrs" class="q-gutter-sm">
+                <q-skeleton
+                  dark
+                  type="rect"
+                  height="60px"
+                  v-for="n in 3"
+                  :key="n"
+                />
+              </q-card-section>
+
+              <!-- Empty PRs -->
+              <q-card-section
+                v-else-if="pullRequests.length === 0"
+                class="text-center q-py-xl"
+              >
+                <q-icon
+                  name="check_circle_outline"
+                  size="48px"
+                  color="positive"
+                />
+                <p class="text-grey-5 q-mt-sm">No open pull requests found.</p>
+              </q-card-section>
+
+              <!-- PR List -->
+              <q-list v-else dark separator class="pr-list-scroll">
+                <q-item
+                  v-for="pr in pullRequests"
+                  :key="pr.number"
+                  clickable
+                  v-ripple
+                  :active="selectedPr?.number === pr.number"
+                  active-class="bg-blue-10"
+                  @click="selectPr(pr)"
+                  class="rounded-sm q-mb-xs"
+                >
+                  <q-item-section avatar>
+                    <q-avatar
+                      size="36px"
+                      color="indigo-8"
+                      text-color="white"
+                      font-size="14px"
+                    >
+                      {{ pr.number }}
+                    </q-avatar>
+                  </q-item-section>
+
+                  <q-item-section>
+                    <q-item-label class="text-weight-medium ellipsis" lines="1">
+                      {{ pr.title }}
+                    </q-item-label>
+                    <q-item-label caption class="text-grey-5">
+                      <q-icon name="person" size="12px" /> {{ pr.author }}
+                      &nbsp;·&nbsp;
+                      <q-icon name="merge_type" size="12px" /> {{ pr.head }} →
+                      {{ pr.base }}
+                    </q-item-label>
+                  </q-item-section>
+
+                  <q-item-section side>
+                    <q-badge
+                      :color="prStatusColor(pr.status)"
+                      :label="pr.status || 'open'"
+                      class="text-capitalize"
+                    />
+                  </q-item-section>
+                </q-item>
+              </q-list>
+            </q-card>
+          </div>
+
+          <!-- ── Code Review + Merge Panel ── -->
+          <div class="col-12 col-lg-7">
+            <q-card
+              class="bg-slate-800 text-white border-glass rounded-card full-height-card pr-workspace-card"
+            >
+              <!-- No PR selected placeholder -->
+              <template v-if="!selectedPr">
+                <q-card-section class="pr-empty-state">
+                  <q-avatar
+                    size="56px"
+                    color="blue-grey-9"
+                    text-color="blue-3"
+                    icon="rate_review"
+                  />
+                  <div class="text-subtitle1 text-weight-medium q-mt-md">
+                    Select a pull request
+                  </div>
+                  <div class="text-caption text-grey-5 q-mt-xs">
+                    Choose one from the list to inspect its changes, run an AI
+                    review, or merge it.
+                  </div>
+                </q-card-section>
+              </template>
+
+              <!-- PR detail view -->
+              <template v-else>
+                <!-- PR Header -->
+                <q-card-section class="q-pb-sm">
+                  <div class="row items-start justify-between">
+                    <div>
+                      <div class="text-h6 text-weight-bold">
+                        <q-chip
+                          dense
+                          color="indigo-8"
+                          text-color="white"
+                          class="q-mr-xs"
+                        >
+                          #{{ selectedPr.number }}
+                        </q-chip>
+                        {{ selectedPr.title }}
+                      </div>
+                      <div
+                        class="text-caption text-grey-5 q-mt-xs row items-center q-gutter-x-sm"
+                      >
+                        <span
+                          ><q-icon name="person" size="14px" />
+                          {{ selectedPr.author }}</span
+                        >
+                        <span
+                          ><q-icon name="merge_type" size="14px" />
+                          {{ selectedPr.head }} → {{ selectedPr.base }}</span
+                        >
+                        <span v-if="selectedPr.createdAt">
+                          <q-icon name="schedule" size="14px" />
+                          {{ formatDate(selectedPr.createdAt) }}
+                        </span>
+                      </div>
+                    </div>
+                    <q-badge
+                      :color="prStatusColor(selectedPr.status)"
+                      :label="selectedPr.status || 'open'"
+                      class="text-capitalize q-mt-xs"
+                      style="font-size: 12px; padding: 4px 8px"
+                    />
+                  </div>
+
+                  <!-- PR Description -->
+                  <div
+                    v-if="selectedPr.description"
+                    class="bg-slate-900 q-pa-sm rounded-borders q-mt-sm text-caption text-grey-4"
+                  >
+                    {{ selectedPr.description }}
+                  </div>
+                </q-card-section>
+
+                <q-separator dark />
+
+                <!-- Changed Files Summary -->
+                <q-card-section
+                  v-if="selectedPr.changedFiles?.length"
+                  class="q-pb-sm"
+                >
+                  <div
+                    class="text-subtitle2 text-weight-medium q-mb-xs row items-center q-gutter-x-xs"
+                  >
+                    <q-icon name="difference" color="amber" />
+                    <span
+                      >Changed Files ({{
+                        selectedPr.changedFiles.length
+                      }})</span
+                    >
+                  </div>
+                  <div class="changed-files-list q-gutter-xs">
+                    <q-chip
+                      v-for="file in selectedPr.changedFiles.slice(0, 12)"
+                      :key="file"
+                      dense
+                      color="slate-900"
+                      text-color="grey-4"
+                      class="bg-slate-900 text-mono"
+                      style="font-size: 11px"
+                    >
+                      {{ file }}
+                    </q-chip>
+                    <q-chip
+                      v-if="selectedPr.changedFiles.length > 12"
+                      dense
+                      color="grey-8"
+                      text-color="white"
+                    >
+                      +{{ selectedPr.changedFiles.length - 12 }} more
+                    </q-chip>
+                  </div>
+                </q-card-section>
+
+                <q-separator dark v-if="selectedPr.changedFiles?.length" />
+
+                <!-- Action Buttons -->
+                <q-card-section class="q-pb-sm">
+                  <div class="row q-gutter-sm">
+                    <!-- Review Only -->
+                    <q-btn
+                      unelevated
+                      color="indigo-7"
+                      icon="psychology"
+                      label="Review with Gemini AI"
+                      no-caps
+                      :loading="reviewingPr"
+                      :disable="
+                        merging ||
+                        rejecting ||
+                        ['merged', 'closed', 'rejected'].includes(
+                          selectedPr.status
+                        )
+                      "
+                      @click="reviewPr('review')"
+                    />
+
+                    <!-- Review & Merge -->
+                    <q-btn
+                      unelevated
+                      :color="canMerge ? 'positive' : 'grey-7'"
+                      icon="merge"
+                      label="Review & Merge"
+                      no-caps
+                      :loading="merging"
+                      :disable="
+                        reviewingPr ||
+                        rejecting ||
+                        ['merged', 'closed', 'rejected'].includes(
+                          selectedPr.status
+                        )
+                      "
+                      @click="confirmMerge"
+                    >
+                      <q-tooltip
+                        v-if="!canMerge && !reviewingPr"
+                        class="bg-slate-900 text-white"
+                      >
+                        Run an AI review first before merging.
+                      </q-tooltip>
+                    </q-btn>
+
+                    <!-- Reject Merge Request -->
+                    <q-btn
+                      unelevated
+                      color="negative"
+                      icon="do_not_disturb_on"
+                      label="Reject"
+                      no-caps
+                      :loading="rejecting"
+                      :disable="
+                        reviewingPr ||
+                        merging ||
+                        ['merged', 'closed', 'rejected'].includes(
+                          selectedPr.status
+                        )
+                      "
+                      @click="confirmReject"
+                    >
+                      <q-tooltip class="bg-slate-900 text-white">
+                        Close this PR without merging and leave a rejection
+                        comment.
+                      </q-tooltip>
+                    </q-btn>
+
+                    <!-- Dismiss / clear selection -->
+                    <q-btn
+                      flat
+                      color="grey-5"
+                      icon="close"
+                      label="Dismiss"
+                      no-caps
+                      @click="clearReview"
+                    />
+                  </div>
+
+                  <!-- Already-closed status notice -->
+                  <div
+                    v-if="
+                      ['merged', 'closed', 'rejected'].includes(
+                        selectedPr.status
+                      )
+                    "
+                    class="row items-center q-gutter-x-xs q-mt-sm"
+                  >
+                    <q-icon
+                      :name="
+                        selectedPr.status === 'merged'
+                          ? 'check_circle'
+                          : 'cancel'
+                      "
+                      :color="
+                        selectedPr.status === 'merged' ? 'positive' : 'negative'
+                      "
+                      size="16px"
+                    />
+                    <span class="text-caption text-grey-4 text-capitalize">
+                      This PR is already
+                      <strong>{{ selectedPr.status }}</strong> — no further
+                      actions available.
+                    </span>
+                  </div>
+                </q-card-section>
+
+                <q-separator dark />
+
+                <!-- AI Review Output -->
+                <q-card-section>
+                  <!-- Loading state -->
+                  <div v-if="reviewingPr" class="text-center q-py-lg">
+                    <q-spinner-dots color="indigo-4" size="40px" />
+                    <p class="text-grey-5 q-mt-sm"
+                      >Gemini is analysing the diff…</p
+                    >
+                  </div>
+
+                  <!-- No review yet -->
+                  <div
+                    v-else-if="!reviewResult"
+                    class="text-center q-py-lg text-grey-6"
+                  >
+                    <q-icon name="auto_awesome" size="40px" color="grey-7" />
+                    <p class="q-mt-sm"
+                      >Click <strong>Review with Gemini AI</strong> to get an
+                      automated code review for this PR.</p
+                    >
+                  </div>
+
+                  <!-- Review result -->
+                  <div v-else>
+                    <!-- Summary badges -->
+                    <div class="row items-center q-gutter-sm q-mb-md">
+                      <div class="text-subtitle2 text-weight-bold">
+                        <q-icon
+                          name="auto_awesome"
+                          color="amber"
+                          class="q-mr-xs"
+                        />
+                        Gemini AI Review
+                      </div>
+                      <q-chip
+                        dense
+                        :color="reviewResult.approved ? 'positive' : 'warning'"
+                        :icon="
+                          reviewResult.approved ? 'check_circle' : 'warning'
+                        "
+                        text-color="white"
+                      >
+                        {{
+                          reviewResult.approved
+                            ? 'Looks Good to Merge'
+                            : 'Needs Attention'
+                        }}
+                      </q-chip>
+                      <q-chip
+                        v-if="reviewResult.score != null"
+                        dense
+                        color="indigo-8"
+                        text-color="white"
+                      >
+                        Score: {{ reviewResult.score }}/10
+                      </q-chip>
+                    </div>
+
+                    <!-- Issues list -->
+                    <div v-if="reviewResult.issues?.length" class="q-mb-md">
+                      <div
+                        class="text-caption text-weight-medium text-grey-4 q-mb-xs"
+                      >
+                        <q-icon name="bug_report" color="negative" /> Issues
+                        Found ({{ reviewResult.issues.length }})
+                      </div>
+                      <q-list dense dark class="bg-slate-900 rounded-borders">
+                        <q-item
+                          v-for="(issue, i) in reviewResult.issues"
+                          :key="i"
+                          dense
+                        >
+                          <q-item-section avatar>
+                            <q-icon
+                              :name="
+                                issue.severity === 'error'
+                                  ? 'error'
+                                  : issue.severity === 'warning'
+                                    ? 'warning'
+                                    : 'info'
+                              "
+                              :color="
+                                issue.severity === 'error'
+                                  ? 'negative'
+                                  : issue.severity === 'warning'
+                                    ? 'warning'
+                                    : 'info'
+                              "
+                              size="16px"
+                            />
+                          </q-item-section>
+                          <q-item-section>
+                            <q-item-label class="text-caption">{{
+                              issue.message
+                            }}</q-item-label>
+                            <q-item-label
+                              v-if="issue.file"
+                              caption
+                              class="text-grey-6 text-mono"
+                            >
+                              {{ issue.file
+                              }}<span v-if="issue.line">:{{ issue.line }}</span>
+                            </q-item-label>
+                          </q-item-section>
+                        </q-item>
+                      </q-list>
+                    </div>
+
+                    <!-- Suggestions -->
+                    <div
+                      v-if="reviewResult.suggestions?.length"
+                      class="q-mb-md"
+                    >
+                      <div
+                        class="text-caption text-weight-medium text-grey-4 q-mb-xs"
+                      >
+                        <q-icon name="lightbulb" color="amber" /> Suggestions
+                      </div>
+                      <ul class="suggestion-list q-ma-none q-pl-md">
+                        <li
+                          v-for="(s, i) in reviewResult.suggestions"
+                          :key="i"
+                          class="text-caption text-grey-3 q-mb-xs"
+                        >
+                          {{ s }}
+                        </li>
+                      </ul>
+                    </div>
+
+                    <!-- Full raw feedback collapsible -->
+                    <q-expansion-item
+                      dark
+                      dense
+                      icon="article"
+                      label="Full Review Details"
+                      class="bg-slate-900 rounded-borders q-mt-sm"
+                      header-class="text-caption text-grey-4"
+                    >
+                      <q-card dark class="bg-slate-900">
+                        <q-card-section>
+                          <pre class="review-pre text-grey-3">{{
+                            reviewResult.rawFeedback
+                          }}</pre>
+                        </q-card-section>
+                      </q-card>
+                    </q-expansion-item>
+
+                    <!-- Merge result banner -->
+                    <q-banner
+                      v-if="mergeResult"
+                      :class="
+                        mergeResult.success ? 'bg-positive' : 'bg-negative'
+                      "
+                      text-color="white"
+                      rounded
+                      class="q-mt-md"
+                    >
+                      <template #avatar>
+                        <q-icon
+                          :name="mergeResult.success ? 'check_circle' : 'error'"
+                        />
+                      </template>
+                      {{ mergeResult.message }}
+                    </q-banner>
+
+                    <!-- Reject result banner -->
+                    <q-banner
+                      v-if="rejectResult"
+                      :class="
+                        rejectResult.success
+                          ? 'bg-deep-orange-9'
+                          : 'bg-negative'
+                      "
+                      text-color="white"
+                      rounded
+                      class="q-mt-md"
+                    >
+                      <template #avatar>
+                        <q-icon
+                          :name="
+                            rejectResult.success ? 'do_not_disturb_on' : 'error'
+                          "
+                        />
+                      </template>
+                      {{ rejectResult.message }}
+                    </q-banner>
+                  </div>
+                </q-card-section>
+              </template>
+            </q-card>
+          </div>
+        </div>
+
+        <div class="row q-col-gutter-lg q-mt-md q-mb-lg">
+          <div class="col-12">
+            <q-card class="bg-slate-800 text-white border-glass rounded-card">
+              <q-card-section class="row items-center justify-between q-pb-sm">
+                <div>
+                  <div class="text-h6 text-weight-bold">Repositories</div>
+                  <div class="text-caption text-grey-4">
+                    {{ repositoryItems.length }} available from
+                    {{ providerName }}
+                  </div>
+                </div>
+                <q-btn
+                  flat
+                  round
+                  dense
+                  icon="refresh"
+                  aria-label="Refresh repositories"
+                  :loading="loadingRepositories"
+                  :disable="!config.token"
+                  @click="loadRepositories(true)"
+                >
+                  <q-tooltip>Refresh repositories</q-tooltip>
+                </q-btn>
+              </q-card-section>
+              <q-card-section class="q-pt-none">
+                <q-input
+                  v-model="repositorySearch"
+                  dark
+                  outlined
+                  dense
+                  clearable
+                  placeholder="Search repositories"
+                  aria-label="Search repositories"
+                  class="q-mb-sm"
+                >
+                  <template #prepend><q-icon name="search" /></template>
+                </q-input>
+
+                <div class="repository-list-scroll">
+                  <q-list v-if="visibleRepositories.length" dark separator>
+                    <q-item
+                      v-for="repository in visibleRepositories"
+                      :key="repository.path"
+                      clickable
+                      :active="config.repository === repository.path"
+                      active-class="bg-slate-900"
+                      @click="openRepository(repository)"
+                    >
+                      <q-item-section avatar>
+                        <q-icon name="source" color="primary" />
+                      </q-item-section>
+                      <q-item-section>
+                        <q-item-label class="text-weight-medium">
+                          {{ repository.name }}
+                        </q-item-label>
+                        <q-item-label caption class="text-grey-4">
+                          {{ repository.path }}
+                          <span v-if="repository.defaultBranch">
+                            · Default branch: {{ repository.defaultBranch }}
+                          </span>
+                          <span v-if="repository.updatedAt">
+                            · Updated {{ formatDateTime(repository.updatedAt) }}
+                          </span>
+                        </q-item-label>
+                      </q-item-section>
+                      <q-item-section side>
+                        <div class="row items-center q-gutter-sm">
+                          <q-badge
+                            v-if="repository.visibility"
+                            :color="
+                              repository.visibility === 'private'
+                                ? 'amber-9'
+                                : 'positive'
+                            "
+                            :label="repository.visibility"
+                          />
+                          <q-btn
+                            flat
+                            round
+                            dense
+                            :color="
+                              config.repository === repository.path
+                                ? 'positive'
+                                : 'grey-4'
+                            "
+                            :icon="
+                              config.repository === repository.path
+                                ? 'check_circle'
+                                : 'radio_button_unchecked'
+                            "
+                            :aria-label="`Select ${repository.path}`"
+                            @click.stop="selectRepository(repository.path)"
+                          >
+                            <q-tooltip>
+                              {{
+                                config.repository === repository.path
+                                  ? 'Selected'
+                                  : 'Select repository'
+                              }}
+                            </q-tooltip>
+                          </q-btn>
+                        </div>
+                      </q-item-section>
+                    </q-item>
+                  </q-list>
+                  <div
+                    v-else-if="loadingRepositories"
+                    class="q-gutter-sm q-pa-md"
+                  >
+                    <q-skeleton dark type="text" />
+                    <q-skeleton dark type="text" />
+                    <q-skeleton dark type="text" />
+                  </div>
+                  <div v-else class="text-center text-grey-4 q-pa-lg">
+                    <q-icon name="source" size="28px" class="q-mb-sm" />
+                    <div>
+                      {{
+                        config.token
+                          ? 'No repositories match this search.'
+                          : 'Connect a provider token to load repositories.'
+                      }}
+                    </div>
+                  </div>
+                </div>
+              </q-card-section>
+            </q-card>
+          </div>
+        </div>
       </div>
 
       <!-- Right Column: Automation + Webhook -->
@@ -342,15 +1011,28 @@
               class="q-gutter-y-sm"
               @submit.prevent="createBranch"
             >
-              <q-input
-                :model-value="config.repository || ''"
+              <q-select
+                v-model="config.repository"
+                :options="branchRepositoryOptions"
                 dark
                 outlined
                 dense
-                readonly
-                label="Selected Repository"
-                placeholder="Choose a repository first"
-              />
+                emit-value
+                map-options
+                option-label="label"
+                option-value="value"
+                label="Repository *"
+                :rules="[val => !!val || 'Select a repository']"
+                @update:model-value="selectRepository"
+              >
+                <template #no-option>
+                  <q-item>
+                    <q-item-section class="text-grey-5">
+                      No repositories loaded
+                    </q-item-section>
+                  </q-item>
+                </template>
+              </q-select>
               <q-input
                 v-model="newBranch.name"
                 dark
@@ -522,483 +1204,111 @@
     <!-- ══════════════════════════════════════════════════════════ -->
     <!-- Row 2 — Git Merge Code Review Panel                      -->
     <!-- ══════════════════════════════════════════════════════════ -->
-    <div class="row q-col-gutter-lg">
-      <!-- ── Pull Requests List ── -->
-      <div class="col-12 col-lg-5">
-        <q-card
-          class="bg-slate-800 text-white border-glass rounded-card full-height-card"
-        >
-          <q-card-section class="row items-center justify-between q-pb-sm">
-            <div class="text-h6 text-weight-bold">Open Pull Requests</div>
+    <q-dialog v-model="showRepositoryBrowser" maximized>
+      <q-card class="bg-slate-900 text-white">
+        <q-card-section class="row items-center justify-between q-pb-sm">
+          <div>
+            <div class="text-h6 text-weight-bold">
+              {{ selectedRepository?.name || 'Repository files' }}
+            </div>
+            <div class="text-caption text-grey-4">
+              {{ selectedRepository?.path }}
+              <span v-if="selectedRepository?.updatedAt">
+                · Updated {{ formatDateTime(selectedRepository.updatedAt) }}
+              </span>
+            </div>
+          </div>
+          <div class="row items-center q-gutter-sm">
             <q-btn
               flat
               round
               dense
-              color="white"
               icon="refresh"
-              :loading="loadingPrs"
-              @click="fetchPullRequests"
+              aria-label="Refresh file list"
+              :loading="loadingRepositoryTree"
+              @click="loadRepositoryTree(repositoryTreePath)"
             >
-              <q-tooltip class="bg-slate-900 text-white">Refresh PRs</q-tooltip>
+              <q-tooltip>Refresh files</q-tooltip>
             </q-btn>
-          </q-card-section>
-
-          <!-- Empty / not connected state -->
-          <q-card-section v-if="!isconnected" class="text-center q-py-xl">
-            <q-icon name="link_off" size="48px" color="grey-6" />
-            <p class="text-grey-5 q-mt-sm">
-              Save your configuration first to load Pull Requests.
-            </p>
-          </q-card-section>
-
-          <!-- Loading skeleton -->
-          <q-card-section v-else-if="loadingPrs" class="q-gutter-sm">
-            <q-skeleton
-              dark
-              type="rect"
-              height="60px"
-              v-for="n in 3"
-              :key="n"
+            <q-btn
+              flat
+              round
+              dense
+              icon="close"
+              aria-label="Close repository files"
+              v-close-popup
             />
-          </q-card-section>
-
-          <!-- Empty PRs -->
-          <q-card-section
-            v-else-if="pullRequests.length === 0"
-            class="text-center q-py-xl"
-          >
-            <q-icon name="check_circle_outline" size="48px" color="positive" />
-            <p class="text-grey-5 q-mt-sm">No open pull requests found.</p>
-          </q-card-section>
-
-          <!-- PR List -->
-          <q-list v-else dark separator>
+          </div>
+        </q-card-section>
+        <q-separator dark />
+        <q-card-section class="row items-center justify-between q-py-sm">
+          <q-breadcrumbs class="text-grey-3">
+            <q-breadcrumbs-el
+              label="Repository"
+              icon="source"
+              class="cursor-pointer"
+              @click="loadRepositoryTree('')"
+            />
+            <q-breadcrumbs-el
+              v-for="(segment, index) in repositoryTreeSegments"
+              :key="segment.path"
+              :label="segment.name"
+              class="cursor-pointer"
+              @click="loadRepositoryTree(segment.path)"
+            />
+          </q-breadcrumbs>
+          <q-btn
+            v-if="repositoryTreePath"
+            flat
+            dense
+            no-caps
+            icon="arrow_upward"
+            label="Up one level"
+            @click="loadRepositoryTree(repositoryParentPath)"
+          />
+        </q-card-section>
+        <q-card-section class="q-pt-none">
+          <q-list dark separator class="rounded-borders">
             <q-item
-              v-for="pr in pullRequests"
-              :key="pr.number"
-              clickable
-              v-ripple
-              :active="selectedPr?.number === pr.number"
-              active-class="bg-blue-10"
-              @click="selectPr(pr)"
-              class="rounded-sm q-mb-xs"
+              v-for="entry in repositoryTreeEntries"
+              :key="entry.path"
+              :clickable="entry.type === 'tree'"
+              @click="openRepositoryTreeEntry(entry)"
             >
               <q-item-section avatar>
-                <q-avatar
-                  size="36px"
-                  color="indigo-8"
-                  text-color="white"
-                  font-size="14px"
-                >
-                  {{ pr.number }}
-                </q-avatar>
-              </q-item-section>
-
-              <q-item-section>
-                <q-item-label class="text-weight-medium ellipsis" lines="1">
-                  {{ pr.title }}
-                </q-item-label>
-                <q-item-label caption class="text-grey-5">
-                  <q-icon name="person" size="12px" /> {{ pr.author }}
-                  &nbsp;·&nbsp;
-                  <q-icon name="merge_type" size="12px" /> {{ pr.head }} →
-                  {{ pr.base }}
-                </q-item-label>
-              </q-item-section>
-
-              <q-item-section side>
-                <q-badge
-                  :color="prStatusColor(pr.status)"
-                  :label="pr.status || 'open'"
-                  class="text-capitalize"
+                <q-icon
+                  :name="entry.type === 'tree' ? 'folder' : 'description'"
+                  :color="entry.type === 'tree' ? 'amber' : 'grey-4'"
                 />
+              </q-item-section>
+              <q-item-section>
+                <q-item-label>{{ entry.name }}</q-item-label>
+                <q-item-label caption class="text-grey-5">
+                  {{ entry.path }}
+                </q-item-label>
+              </q-item-section>
+              <q-item-section side class="text-caption text-grey-5">
+                {{ entry.size ? formatFileSize(entry.size) : '' }}
+              </q-item-section>
+            </q-item>
+            <q-item v-if="loadingRepositoryTree">
+              <q-item-section avatar
+                ><q-spinner color="primary"
+              /></q-item-section>
+              <q-item-section>Loading repository files...</q-item-section>
+            </q-item>
+            <q-item
+              v-else-if="!repositoryTreeEntries.length"
+              class="text-grey-4"
+            >
+              <q-item-section>
+                This folder is empty or the file list is unavailable.
               </q-item-section>
             </q-item>
           </q-list>
-        </q-card>
-      </div>
-
-      <!-- ── Code Review + Merge Panel ── -->
-      <div class="col-12 col-lg-7">
-        <q-card
-          class="bg-slate-800 text-white border-glass rounded-card full-height-card"
-        >
-          <!-- No PR selected placeholder -->
-          <template v-if="!selectedPr">
-            <q-card-section class="text-center q-py-xl">
-              <q-icon name="rate_review" size="56px" color="grey-6" />
-              <p class="text-grey-5 q-mt-sm text-subtitle1">
-                Select a Pull Request to review or merge
-              </p>
-            </q-card-section>
-          </template>
-
-          <!-- PR detail view -->
-          <template v-else>
-            <!-- PR Header -->
-            <q-card-section class="q-pb-sm">
-              <div class="row items-start justify-between">
-                <div>
-                  <div class="text-h6 text-weight-bold">
-                    <q-chip
-                      dense
-                      color="indigo-8"
-                      text-color="white"
-                      class="q-mr-xs"
-                    >
-                      #{{ selectedPr.number }}
-                    </q-chip>
-                    {{ selectedPr.title }}
-                  </div>
-                  <div
-                    class="text-caption text-grey-5 q-mt-xs row items-center q-gutter-x-sm"
-                  >
-                    <span
-                      ><q-icon name="person" size="14px" />
-                      {{ selectedPr.author }}</span
-                    >
-                    <span
-                      ><q-icon name="merge_type" size="14px" />
-                      {{ selectedPr.head }} → {{ selectedPr.base }}</span
-                    >
-                    <span v-if="selectedPr.createdAt">
-                      <q-icon name="schedule" size="14px" />
-                      {{ formatDate(selectedPr.createdAt) }}
-                    </span>
-                  </div>
-                </div>
-                <q-badge
-                  :color="prStatusColor(selectedPr.status)"
-                  :label="selectedPr.status || 'open'"
-                  class="text-capitalize q-mt-xs"
-                  style="font-size: 12px; padding: 4px 8px"
-                />
-              </div>
-
-              <!-- PR Description -->
-              <div
-                v-if="selectedPr.description"
-                class="bg-slate-900 q-pa-sm rounded-borders q-mt-sm text-caption text-grey-4"
-              >
-                {{ selectedPr.description }}
-              </div>
-            </q-card-section>
-
-            <q-separator dark />
-
-            <!-- Changed Files Summary -->
-            <q-card-section
-              v-if="selectedPr.changedFiles?.length"
-              class="q-pb-sm"
-            >
-              <div
-                class="text-subtitle2 text-weight-medium q-mb-xs row items-center q-gutter-x-xs"
-              >
-                <q-icon name="difference" color="amber" />
-                <span
-                  >Changed Files ({{ selectedPr.changedFiles.length }})</span
-                >
-              </div>
-              <div class="changed-files-list q-gutter-xs">
-                <q-chip
-                  v-for="file in selectedPr.changedFiles.slice(0, 12)"
-                  :key="file"
-                  dense
-                  color="slate-900"
-                  text-color="grey-4"
-                  class="bg-slate-900 text-mono"
-                  style="font-size: 11px"
-                >
-                  {{ file }}
-                </q-chip>
-                <q-chip
-                  v-if="selectedPr.changedFiles.length > 12"
-                  dense
-                  color="grey-8"
-                  text-color="white"
-                >
-                  +{{ selectedPr.changedFiles.length - 12 }} more
-                </q-chip>
-              </div>
-            </q-card-section>
-
-            <q-separator dark v-if="selectedPr.changedFiles?.length" />
-
-            <!-- Action Buttons -->
-            <q-card-section class="q-pb-sm">
-              <div class="row q-gutter-sm">
-                <!-- Review Only -->
-                <q-btn
-                  unelevated
-                  color="indigo-7"
-                  icon="psychology"
-                  label="Review with Gemini AI"
-                  no-caps
-                  :loading="reviewingPr"
-                  :disable="
-                    merging ||
-                    rejecting ||
-                    ['merged', 'closed', 'rejected'].includes(selectedPr.status)
-                  "
-                  @click="reviewPr('review')"
-                />
-
-                <!-- Review & Merge -->
-                <q-btn
-                  unelevated
-                  :color="canMerge ? 'positive' : 'grey-7'"
-                  icon="merge"
-                  label="Review & Merge"
-                  no-caps
-                  :loading="merging"
-                  :disable="
-                    reviewingPr ||
-                    rejecting ||
-                    ['merged', 'closed', 'rejected'].includes(selectedPr.status)
-                  "
-                  @click="confirmMerge"
-                >
-                  <q-tooltip
-                    v-if="!canMerge && !reviewingPr"
-                    class="bg-slate-900 text-white"
-                  >
-                    Run an AI review first before merging.
-                  </q-tooltip>
-                </q-btn>
-
-                <!-- Reject Merge Request -->
-                <q-btn
-                  unelevated
-                  color="negative"
-                  icon="do_not_disturb_on"
-                  label="Reject"
-                  no-caps
-                  :loading="rejecting"
-                  :disable="
-                    reviewingPr ||
-                    merging ||
-                    ['merged', 'closed', 'rejected'].includes(selectedPr.status)
-                  "
-                  @click="confirmReject"
-                >
-                  <q-tooltip class="bg-slate-900 text-white">
-                    Close this PR without merging and leave a rejection comment.
-                  </q-tooltip>
-                </q-btn>
-
-                <!-- Dismiss / clear selection -->
-                <q-btn
-                  flat
-                  color="grey-5"
-                  icon="close"
-                  label="Dismiss"
-                  no-caps
-                  @click="clearReview"
-                />
-              </div>
-
-              <!-- Already-closed status notice -->
-              <div
-                v-if="
-                  ['merged', 'closed', 'rejected'].includes(selectedPr.status)
-                "
-                class="row items-center q-gutter-x-xs q-mt-sm"
-              >
-                <q-icon
-                  :name="
-                    selectedPr.status === 'merged' ? 'check_circle' : 'cancel'
-                  "
-                  :color="
-                    selectedPr.status === 'merged' ? 'positive' : 'negative'
-                  "
-                  size="16px"
-                />
-                <span class="text-caption text-grey-4 text-capitalize">
-                  This PR is already <strong>{{ selectedPr.status }}</strong> —
-                  no further actions available.
-                </span>
-              </div>
-            </q-card-section>
-
-            <q-separator dark />
-
-            <!-- AI Review Output -->
-            <q-card-section>
-              <!-- Loading state -->
-              <div v-if="reviewingPr" class="text-center q-py-lg">
-                <q-spinner-dots color="indigo-4" size="40px" />
-                <p class="text-grey-5 q-mt-sm">Gemini is analysing the diff…</p>
-              </div>
-
-              <!-- No review yet -->
-              <div
-                v-else-if="!reviewResult"
-                class="text-center q-py-lg text-grey-6"
-              >
-                <q-icon name="auto_awesome" size="40px" color="grey-7" />
-                <p class="q-mt-sm"
-                  >Click <strong>Review with Gemini AI</strong> to get an
-                  automated code review for this PR.</p
-                >
-              </div>
-
-              <!-- Review result -->
-              <div v-else>
-                <!-- Summary badges -->
-                <div class="row items-center q-gutter-sm q-mb-md">
-                  <div class="text-subtitle2 text-weight-bold">
-                    <q-icon name="auto_awesome" color="amber" class="q-mr-xs" />
-                    Gemini AI Review
-                  </div>
-                  <q-chip
-                    dense
-                    :color="reviewResult.approved ? 'positive' : 'warning'"
-                    :icon="reviewResult.approved ? 'check_circle' : 'warning'"
-                    text-color="white"
-                  >
-                    {{
-                      reviewResult.approved
-                        ? 'Looks Good to Merge'
-                        : 'Needs Attention'
-                    }}
-                  </q-chip>
-                  <q-chip
-                    v-if="reviewResult.score != null"
-                    dense
-                    color="indigo-8"
-                    text-color="white"
-                  >
-                    Score: {{ reviewResult.score }}/10
-                  </q-chip>
-                </div>
-
-                <!-- Issues list -->
-                <div v-if="reviewResult.issues?.length" class="q-mb-md">
-                  <div
-                    class="text-caption text-weight-medium text-grey-4 q-mb-xs"
-                  >
-                    <q-icon name="bug_report" color="negative" /> Issues Found
-                    ({{ reviewResult.issues.length }})
-                  </div>
-                  <q-list dense dark class="bg-slate-900 rounded-borders">
-                    <q-item
-                      v-for="(issue, i) in reviewResult.issues"
-                      :key="i"
-                      dense
-                    >
-                      <q-item-section avatar>
-                        <q-icon
-                          :name="
-                            issue.severity === 'error'
-                              ? 'error'
-                              : issue.severity === 'warning'
-                                ? 'warning'
-                                : 'info'
-                          "
-                          :color="
-                            issue.severity === 'error'
-                              ? 'negative'
-                              : issue.severity === 'warning'
-                                ? 'warning'
-                                : 'info'
-                          "
-                          size="16px"
-                        />
-                      </q-item-section>
-                      <q-item-section>
-                        <q-item-label class="text-caption">{{
-                          issue.message
-                        }}</q-item-label>
-                        <q-item-label
-                          v-if="issue.file"
-                          caption
-                          class="text-grey-6 text-mono"
-                        >
-                          {{ issue.file
-                          }}<span v-if="issue.line">:{{ issue.line }}</span>
-                        </q-item-label>
-                      </q-item-section>
-                    </q-item>
-                  </q-list>
-                </div>
-
-                <!-- Suggestions -->
-                <div v-if="reviewResult.suggestions?.length" class="q-mb-md">
-                  <div
-                    class="text-caption text-weight-medium text-grey-4 q-mb-xs"
-                  >
-                    <q-icon name="lightbulb" color="amber" /> Suggestions
-                  </div>
-                  <ul class="suggestion-list q-ma-none q-pl-md">
-                    <li
-                      v-for="(s, i) in reviewResult.suggestions"
-                      :key="i"
-                      class="text-caption text-grey-3 q-mb-xs"
-                    >
-                      {{ s }}
-                    </li>
-                  </ul>
-                </div>
-
-                <!-- Full raw feedback collapsible -->
-                <q-expansion-item
-                  dark
-                  dense
-                  icon="article"
-                  label="Full Review Details"
-                  class="bg-slate-900 rounded-borders q-mt-sm"
-                  header-class="text-caption text-grey-4"
-                >
-                  <q-card dark class="bg-slate-900">
-                    <q-card-section>
-                      <pre class="review-pre text-grey-3">{{
-                        reviewResult.rawFeedback
-                      }}</pre>
-                    </q-card-section>
-                  </q-card>
-                </q-expansion-item>
-
-                <!-- Merge result banner -->
-                <q-banner
-                  v-if="mergeResult"
-                  :class="mergeResult.success ? 'bg-positive' : 'bg-negative'"
-                  text-color="white"
-                  rounded
-                  class="q-mt-md"
-                >
-                  <template #avatar>
-                    <q-icon
-                      :name="mergeResult.success ? 'check_circle' : 'error'"
-                    />
-                  </template>
-                  {{ mergeResult.message }}
-                </q-banner>
-
-                <!-- Reject result banner -->
-                <q-banner
-                  v-if="rejectResult"
-                  :class="
-                    rejectResult.success ? 'bg-deep-orange-9' : 'bg-negative'
-                  "
-                  text-color="white"
-                  rounded
-                  class="q-mt-md"
-                >
-                  <template #avatar>
-                    <q-icon
-                      :name="
-                        rejectResult.success ? 'do_not_disturb_on' : 'error'
-                      "
-                    />
-                  </template>
-                  {{ rejectResult.message }}
-                </q-banner>
-              </div>
-            </q-card-section>
-          </template>
-        </q-card>
-      </div>
-    </div>
+        </q-card-section>
+      </q-card>
+    </q-dialog>
 
     <!-- ══════════════════════════════════════════════════════════ -->
     <!-- Merge Confirmation Dialog                                 -->
@@ -1115,6 +1425,7 @@ const testing = ref(false)
 const saving = ref(false)
 const creatingRepository = ref(false)
 const loadingRepositories = ref(false)
+const loadingRepositoryTree = ref(false)
 const creatingBranch = ref(false)
 const loadingPrs = ref(false)
 const reviewingPr = ref(false)
@@ -1124,6 +1435,7 @@ const showToken = ref(false)
 const showGeminiKey = ref(false)
 const showMergeDialog = ref(false)
 const showRejectDialog = ref(false)
+const showRepositoryBrowser = ref(false)
 
 // ─── Config ────────────────────────────────────────────────────────────────
 const configFormRef = ref(null)
@@ -1182,7 +1494,39 @@ const newRepository = ref({
 
 const repositoryOptions = ref([])
 const filteredRepositories = ref([])
+const repositoryItems = ref([])
+const repositorySearch = ref('')
+const selectedRepository = ref(null)
+const repositoryTreePath = ref('')
+const repositoryTreeEntries = ref([])
 const newBranch = ref({ name: '', sourceBranch: 'main' })
+
+const branchRepositoryOptions = computed(() =>
+  repositoryItems.value.map(repository => ({
+    label: `${repository.path}${repository.visibility ? ` (${repository.visibility})` : ''}`,
+    value: repository.path
+  }))
+)
+
+const repositoryTreeSegments = computed(() => {
+  const segments = repositoryTreePath.value.split('/').filter(Boolean)
+  return segments.map((name, index) => ({
+    name,
+    path: segments.slice(0, index + 1).join('/')
+  }))
+})
+
+const repositoryParentPath = computed(() =>
+  repositoryTreePath.value.split('/').filter(Boolean).slice(0, -1).join('/')
+)
+
+const visibleRepositories = computed(() => {
+  const search = repositorySearch.value.trim().toLowerCase()
+  if (!search) return repositoryItems.value
+  return repositoryItems.value.filter(repository =>
+    `${repository.name} ${repository.path}`.toLowerCase().includes(search)
+  )
+})
 
 const providerAccessGuidance = computed(() => {
   const guidance = {
@@ -1230,6 +1574,25 @@ const formatDate = iso => {
     month: 'short',
     year: 'numeric'
   })
+}
+
+const formatDateTime = value => {
+  if (!value) return 'Unknown'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return 'Unknown'
+  return date.toLocaleString('en-IN', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  })
+}
+
+const formatFileSize = bytes => {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
 const selectPr = pr => {
@@ -1490,7 +1853,7 @@ const addRepositoryOption = (value, done) => {
   done(repository, 'add-unique')
 }
 
-const loadRepositories = async () => {
+const loadRepositories = async (notifyOnSuccess = false) => {
   if (!config.value.token) return
 
   try {
@@ -1501,40 +1864,112 @@ const loadRepositories = async () => {
       hostUrl: config.value.hostUrl,
       gitToken: config.value.token
     })
-    if (!data?.success) {
+    if (data?.success === false) {
       throw new Error(data?.error || 'Failed to load repositories.')
     }
 
-    const repositories = (data.repositories ?? data.repos ?? [])
+    const repositoryResponse = Array.isArray(data)
+      ? data
+      : (data?.repositories ??
+        data?.repos ??
+        data?.data?.repositories ??
+        data?.data?.repos ??
+        data?.data ??
+        data?.content ??
+        [])
+    if (!Array.isArray(repositoryResponse)) {
+      throw new Error(
+        'The repository response did not contain a repository list.'
+      )
+    }
+
+    const repositories = repositoryResponse
       .map(repository => {
-        if (typeof repository === 'string') return repository.trim()
+        if (typeof repository === 'string') {
+          const path = repository.trim()
+          return {
+            path,
+            name: path.split('/').filter(Boolean).at(-1) || path,
+            visibility: '',
+            defaultBranch: '',
+            updatedAt: ''
+          }
+        }
         const fullPath =
           repository.fullName ||
           repository.full_name ||
           repository.pathWithNamespace ||
           repository.path_with_namespace ||
-          repository.path
-        if (fullPath) return fullPath.trim()
+          repository.path ||
+          repository.slug
         const namespace =
           repository.owner?.login ||
           repository.owner?.username ||
           repository.workspace?.slug ||
           repository.namespace?.path ||
-          repository.namespace
-        return [namespace, repository.name || repository.slug]
-          .filter(Boolean)
-          .join('/')
+          repository.namespace?.name ||
+          (typeof repository.namespace === 'string' ? repository.namespace : '')
+        const path = (
+          fullPath || [namespace, repository.name].filter(Boolean).join('/')
+        )?.trim()
+        if (!path) return null
+        const isPrivate =
+          repository.private ?? repository.is_private ?? repository.isPrivate
+        return {
+          path,
+          name: repository.name || path.split('/').filter(Boolean).at(-1),
+          visibility:
+            repository.visibility?.toLowerCase?.() ||
+            (typeof isPrivate === 'boolean'
+              ? isPrivate
+                ? 'private'
+                : 'public'
+              : ''),
+          defaultBranch:
+            repository.defaultBranch ||
+            repository.default_branch ||
+            repository.mainbranch?.name ||
+            '',
+          updatedAt:
+            repository.updatedAt ||
+            repository.updated_at ||
+            repository.pushed_at ||
+            repository.lastActivityAt ||
+            ''
+        }
       })
       .filter(Boolean)
 
     if (
       config.value.repository &&
-      !repositories.includes(config.value.repository)
+      !repositories.some(
+        repository => repository.path === config.value.repository
+      )
     ) {
-      repositories.unshift(config.value.repository)
+      repositories.unshift({
+        path: config.value.repository,
+        name: config.value.repository.split('/').filter(Boolean).at(-1),
+        visibility: '',
+        defaultBranch: config.value.defaultBranch,
+        updatedAt: ''
+      })
     }
-    repositoryOptions.value = [...new Set(repositories)]
+    repositoryItems.value = [
+      ...new Map(
+        repositories.map(repository => [repository.path, repository])
+      ).values()
+    ]
+    repositoryOptions.value = repositoryItems.value.map(
+      repository => repository.path
+    )
     filteredRepositories.value = [...repositoryOptions.value]
+    if (notifyOnSuccess) {
+      Notify.create({
+        type: 'positive',
+        message: `${repositoryItems.value.length} repositories loaded.`,
+        position: 'top'
+      })
+    }
   } catch (error) {
     Notify.create({
       type: 'negative',
@@ -1548,6 +1983,118 @@ const loadRepositories = async () => {
   } finally {
     loadingRepositories.value = false
   }
+}
+
+const selectRepository = path => {
+  config.value.repository = path
+  const repository = repositoryItems.value.find(item => item.path === path)
+  if (repository?.defaultBranch) {
+    config.value.defaultBranch = repository.defaultBranch
+    newBranch.value.sourceBranch = repository.defaultBranch
+  }
+}
+
+const openRepository = async repository => {
+  selectRepository(repository.path)
+  selectedRepository.value = repository
+  repositoryTreePath.value = ''
+  repositoryTreeEntries.value = []
+  showRepositoryBrowser.value = true
+  await loadRepositoryTree('')
+}
+
+const loadRepositoryTree = async path => {
+  if (!selectedRepository.value || !config.value.token) return
+
+  try {
+    loadingRepositoryTree.value = true
+    repositoryTreePath.value = path
+    const { data } = await api.post('/users/git/repository/tree', {
+      userId: config.value.userId,
+      provider: config.value.provider,
+      hostUrl: config.value.hostUrl,
+      gitToken: config.value.token,
+      repoPath: selectedRepository.value.path,
+      branch:
+        selectedRepository.value.defaultBranch || config.value.defaultBranch,
+      path,
+      recursive: false
+    })
+    if (data?.success === false) {
+      throw new Error(data?.error || 'Failed to load repository files.')
+    }
+
+    const entries = Array.isArray(data)
+      ? data
+      : (data?.tree ??
+        data?.files ??
+        data?.entries ??
+        data?.data?.tree ??
+        data?.data?.files ??
+        data?.data ??
+        data?.content ??
+        [])
+    if (!Array.isArray(entries)) {
+      throw new Error('The repository response did not contain a file list.')
+    }
+
+    repositoryTreeEntries.value = entries
+      .map(entry => {
+        const rawPath = String(entry.path || entry.name || '').replace(
+          /^\/+|\/+$/g,
+          ''
+        )
+        const entryPath =
+          path && rawPath !== path && !rawPath.startsWith(`${path}/`)
+            ? `${path}/${rawPath}`
+            : rawPath
+        const entryType = String(
+          entry.type || entry.kind || entry.objectType || ''
+        ).toLowerCase()
+        const isDirectory =
+          ['tree', 'dir', 'directory', 'folder'].includes(entryType) ||
+          entry.isDirectory === true ||
+          entry.is_directory === true ||
+          entry.isDirectory === 'true' ||
+          entry.is_directory === 'true'
+        return {
+          path: entryPath,
+          name: entry.name || entryPath.split('/').filter(Boolean).at(-1),
+          type: isDirectory ? 'tree' : 'blob',
+          size: Number(entry.size) || 0
+        }
+      })
+      .filter(entry => entry.path && entry.name)
+      .sort((left, right) => {
+        if (left.type !== right.type) return left.type === 'tree' ? -1 : 1
+        return left.name.localeCompare(right.name)
+      })
+
+    const updatedAt =
+      data?.repository?.updatedAt ||
+      data?.repository?.updated_at ||
+      data?.updatedAt ||
+      data?.updated_at
+    if (updatedAt) selectedRepository.value.updatedAt = updatedAt
+  } catch (error) {
+    repositoryTreeEntries.value = []
+    Notify.create({
+      type: 'negative',
+      message:
+        error.response?.data?.message ||
+        error.response?.data?.error ||
+        error.message ||
+        'Failed to load repository files.',
+      position: 'top'
+    })
+  } finally {
+    loadingRepositoryTree.value = false
+  }
+}
+
+const openRepositoryTreeEntry = entry => {
+  if (entry?.type !== 'tree') return
+  loadRepositoryTree(entry.path)
 }
 
 // ─── 2. Create Repository ─────────────────────────────────────────────────
@@ -1578,19 +2125,30 @@ const createRepository = async () => {
       initializeReadme: newRepository.value.initializeReadme
     })
 
-    if (!data?.success) {
+    if (data?.success === false) {
       throw new Error(data?.error || 'Repository creation failed.')
     }
 
     const repoPath =
-      data.repoPath ||
-      data.repository?.fullName ||
-      data.repository?.pathWithNamespace ||
-      data.repository?.full_name ||
+      data?.repoPath ||
+      data?.repository?.fullName ||
+      data?.repository?.pathWithNamespace ||
+      data?.repository?.full_name ||
       `${newRepository.value.namespace.trim()}/${newRepository.value.name.trim()}`
     config.value.repository = repoPath
     if (!repositoryOptions.value.includes(repoPath)) {
       repositoryOptions.value.unshift(repoPath)
+    }
+    if (
+      !repositoryItems.value.some(repository => repository.path === repoPath)
+    ) {
+      repositoryItems.value.unshift({
+        path: repoPath,
+        name: repoPath.split('/').filter(Boolean).at(-1),
+        visibility: newRepository.value.visibility,
+        defaultBranch: config.value.defaultBranch,
+        updatedAt: new Date().toISOString()
+      })
     }
     filteredRepositories.value = [...repositoryOptions.value]
     Notify.create({
@@ -1637,14 +2195,14 @@ const createBranch = async () => {
       branchName: newBranch.value.name.trim(),
       sourceBranch: newBranch.value.sourceBranch.trim()
     })
-    if (!data?.success) {
+    if (data?.success === false) {
       throw new Error(data?.error || 'Branch creation failed.')
     }
 
     Notify.create({
       type: 'positive',
       message:
-        data.message ||
+        data?.message ||
         `Branch ${newBranch.value.name.trim()} created in ${config.value.repository}.`,
       position: 'top'
     })
@@ -1898,6 +2456,28 @@ onMounted(() => {
 }
 .full-height-card {
   height: 100%;
+}
+.pr-workspace-card {
+  min-height: 380px;
+}
+.pr-list-scroll {
+  max-height: 460px;
+  overflow-y: auto;
+}
+.pr-empty-state {
+  min-height: 320px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  text-align: center;
+}
+.repository-list-scroll {
+  max-height: 360px;
+  overflow-y: auto;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
 }
 .text-mono {
   font-family: 'Courier New', Courier, monospace;
