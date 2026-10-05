@@ -102,17 +102,6 @@
       /></q-item-section>
       <q-item-section>Configuration</q-item-section>
     </q-item>
-    <q-item
-      clickable
-      v-ripple
-      to="/git-configuration"
-      active-class="text-primary text-weight-bold"
-    >
-      <q-item-section avatar
-        ><q-icon name="settings" size="20px"
-      /></q-item-section>
-      <q-item-section>Git Configuration</q-item-section>
-    </q-item>
   </div>
 </template>
 
