@@ -1,0 +1,1 @@
+import{M as e,it as t}from"./QAvatar-U8bFRHQO.js";var n=e({name:`QSpace`,setup(){let e=t(`div`,{class:`q-space`});return()=>e}});export{n as t};
