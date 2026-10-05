@@ -1253,9 +1253,9 @@
               unelevated
               no-caps
               icon="note_add"
-              label="New Page"
+              label="New File"
               :disable="!config.token"
-              @click="startNewRepositoryPage"
+              @click="startNewRepositoryFile"
             />
             <q-btn
               flat
@@ -1383,17 +1383,13 @@
             dark
             outlined
             dense
-            label="Page path *"
-            placeholder="src/pages/NewPage.vue"
+            label="File path *"
+            placeholder="src/pages/NewPage.vue or src/Main.java"
             :rules="[
-              val => !!val?.trim() || 'Page path is required',
+              val => !!val?.trim() || 'File path is required',
               val =>
-                val?.trim().endsWith('.vue') ||
-                'A page must use the .vue extension',
-              val =>
-                (!val?.trim().startsWith('/') &&
-                  !val?.trim().split('/').includes('..')) ||
-                'Use a repository-relative path without ..'
+                isValidRepositoryFilePath(val) ||
+                'Use a repository-relative file path without ..'
             ]"
             :disable="committingRepositoryFile"
           />
@@ -1458,7 +1454,8 @@
             :disable="
               !isRepositoryFileDirty ||
               !repositoryCommitMessage.trim() ||
-              (repositoryFile.isNew && !isValidNewPagePath) ||
+              (repositoryFile.isNew &&
+                !isValidRepositoryFilePath(repositoryFile.path)) ||
               loadingRepositoryFile
             "
             @click="commitAndPushRepositoryFile"
@@ -1814,15 +1811,16 @@ const repositoryFile = ref({
 const repositoryCommitMessage = ref('')
 const newBranch = ref({ name: '', sourceBranch: 'main' })
 
-const isValidNewPagePath = computed(() => {
-  const path = repositoryFile.value.path.trim().replaceAll('\\', '/')
+const isValidRepositoryFilePath = pathValue => {
+  const path = pathValue?.trim().replaceAll('\\', '/') || ''
+  const segments = path.split('/')
   return (
-    path.endsWith('.vue') &&
+    !!segments.at(-1) &&
     !path.startsWith('/') &&
-    !path.split('/').includes('..') &&
-    !path.split('/').includes('')
+    !segments.includes('..') &&
+    !segments.includes('')
   )
-})
+}
 
 const isRepositoryFileDirty = computed(
   () => repositoryFile.value.content !== repositoryFile.value.originalContent
@@ -2332,7 +2330,7 @@ const openRepository = async repository => {
   await loadRepositoryTree('')
 }
 
-const startNewRepositoryPage = () => {
+const startNewRepositoryFile = () => {
   if (!selectedRepository.value || !config.value.token) {
     Notify.create({
       type: 'warning',
@@ -2344,18 +2342,8 @@ const startNewRepositoryPage = () => {
 
   const currentFolder = repositoryTreePath.value.replace(/^\/+|\/+$/g, '')
   repositoryFile.value = {
-    path: currentFolder ? `${currentFolder}/NewPage.vue` : 'NewPage.vue',
-    content: [
-      '<template>',
-      '  <q-page class="q-pa-md">',
-      '    <h1>New page</h1>',
-      '  </q-page>',
-      '</template>',
-      '',
-      '<script setup>',
-      '</scr' + 'ipt>',
-      ''
-    ].join('\n'),
+    path: currentFolder ? `${currentFolder}/NewFile.txt` : 'NewFile.txt',
+    content: '',
     originalContent: '',
     sha: '',
     branch:
@@ -2659,10 +2647,13 @@ const formatRepositoryFile = async () => {
 
 const commitAndPushRepositoryFile = async () => {
   if (!isRepositoryFileDirty.value) return
-  if (repositoryFile.value.isNew && !isValidNewPagePath.value) {
+  if (
+    repositoryFile.value.isNew &&
+    !isValidRepositoryFilePath(repositoryFile.value.path)
+  ) {
     Notify.create({
       type: 'warning',
-      message: 'Enter a valid repository-relative .vue page path.',
+      message: 'Enter a valid repository-relative file path.',
       position: 'top'
     })
     return
@@ -2685,7 +2676,7 @@ const commitAndPushRepositoryFile = async () => {
       gitToken: config.value.token,
       repoPath: selectedRepository.value.path,
       branch: repositoryFile.value.branch,
-      path: repositoryFile.value.path.trim(),
+      path: repositoryFile.value.path.trim().replaceAll('\\', '/'),
       content: repositoryFile.value.content,
       commitMessage: repositoryCommitMessage.value.trim(),
       sha: repositoryFile.value.isNew ? undefined : repositoryFile.value.sha,
