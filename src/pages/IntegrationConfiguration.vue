@@ -515,6 +515,16 @@
                 <!-- Action Buttons -->
                 <q-card-section class="q-pb-sm">
                   <div class="row q-gutter-sm">
+                    <q-btn
+                      outline
+                      color="blue-3"
+                      icon="code"
+                      label="View Merge Code"
+                      no-caps
+                      :loading="loadingPullRequestDiff"
+                      @click="loadPullRequestDiff"
+                    />
+
                     <!-- Review Only -->
                     <q-btn
                       unelevated
@@ -589,6 +599,25 @@
                       label="Dismiss"
                       no-caps
                       @click="clearReview"
+                    />
+                  </div>
+
+                  <div
+                    v-if="selectedPr.status === 'merged'"
+                    class="row items-center justify-between bg-slate-900 q-pa-sm q-mt-md rounded-borders"
+                  >
+                    <div class="text-caption text-grey-4">
+                      This pull request is merged. Rollback creates a new
+                      commit; it does not erase history.
+                    </div>
+                    <q-btn
+                      outline
+                      color="negative"
+                      icon="history"
+                      label="Apply Rollback"
+                      no-caps
+                      :loading="revertingPullRequest"
+                      @click="confirmRevertPullRequest"
                     />
                   </div>
 
@@ -1220,6 +1249,15 @@
           </div>
           <div class="row items-center q-gutter-sm">
             <q-btn
+              color="primary"
+              unelevated
+              no-caps
+              icon="note_add"
+              label="New Page"
+              :disable="!config.token"
+              @click="startNewRepositoryPage"
+            />
+            <q-btn
               flat
               round
               dense
@@ -1272,7 +1310,7 @@
             <q-item
               v-for="entry in repositoryTreeEntries"
               :key="entry.path"
-              :clickable="entry.type === 'tree'"
+              clickable
               @click="openRepositoryTreeEntry(entry)"
             >
               <q-item-section avatar>
@@ -1307,6 +1345,263 @@
             </q-item>
           </q-list>
         </q-card-section>
+      </q-card>
+    </q-dialog>
+
+    <q-dialog v-model="showRepositoryFileEditor" maximized>
+      <q-card class="bg-slate-900 text-white column no-wrap">
+        <q-card-section class="row items-center justify-between q-pb-sm">
+          <div class="ellipsis">
+            <div class="text-subtitle1 text-weight-bold ellipsis">
+              {{ repositoryFile.isNew ? 'New Vue page' : repositoryFile.path }}
+            </div>
+            <div class="text-caption text-grey-5">
+              {{ selectedRepository?.path }} · {{ repositoryFile.branch }}
+              <q-badge
+                v-if="isRepositoryFileDirty"
+                color="amber-9"
+                label="Unsaved changes"
+                class="q-ml-sm"
+              />
+            </div>
+          </div>
+          <q-btn
+            flat
+            round
+            dense
+            icon="close"
+            aria-label="Close source editor"
+            :disable="loadingRepositoryFile || committingRepositoryFile"
+            @click="closeRepositoryFileEditor"
+          />
+        </q-card-section>
+        <q-separator dark />
+        <q-card-section class="col column no-wrap q-gutter-y-sm">
+          <q-input
+            v-if="repositoryFile.isNew"
+            v-model="repositoryFile.path"
+            dark
+            outlined
+            dense
+            label="Page path *"
+            placeholder="src/pages/NewPage.vue"
+            :rules="[
+              val => !!val?.trim() || 'Page path is required',
+              val =>
+                val?.trim().endsWith('.vue') ||
+                'A page must use the .vue extension',
+              val =>
+                (!val?.trim().startsWith('/') &&
+                  !val?.trim().split('/').includes('..')) ||
+                'Use a repository-relative path without ..'
+            ]"
+            :disable="committingRepositoryFile"
+          />
+          <q-input
+            v-model="repositoryCommitMessage"
+            dark
+            outlined
+            dense
+            label="Commit message *"
+            placeholder="Describe the change"
+            :disable="loadingRepositoryFile || committingRepositoryFile"
+          />
+          <div v-if="loadingRepositoryFile" class="column items-center q-pa-xl">
+            <q-spinner-dots color="primary" size="40px" />
+            <div class="text-caption text-grey-5 q-mt-sm">
+              Loading file from repository...
+            </div>
+          </div>
+          <textarea
+            v-else
+            v-model="repositoryFile.content"
+            class="source-editor-input col"
+            aria-label="Repository file editor"
+            spellcheck="false"
+            autocapitalize="off"
+            autocomplete="off"
+            :disabled="committingRepositoryFile"
+          />
+        </q-card-section>
+        <q-separator dark />
+        <q-card-actions align="right" class="q-pa-md">
+          <q-btn
+            flat
+            color="grey-4"
+            icon="undo"
+            label="Discard Changes"
+            no-caps
+            :disable="!isRepositoryFileDirty || committingRepositoryFile"
+            @click="discardRepositoryFileChanges"
+          />
+          <q-btn
+            outline
+            color="blue-3"
+            icon="auto_fix_high"
+            label="Format Code"
+            no-caps
+            :loading="formattingRepositoryFile"
+            :disable="
+              loadingRepositoryFile ||
+              committingRepositoryFile ||
+              !repositoryFile.content
+            "
+            @click="formatRepositoryFile"
+          />
+          <q-btn
+            unelevated
+            color="positive"
+            icon="publish"
+            label="Commit & Push"
+            no-caps
+            :loading="committingRepositoryFile"
+            :disable="
+              !isRepositoryFileDirty ||
+              !repositoryCommitMessage.trim() ||
+              (repositoryFile.isNew && !isValidNewPagePath) ||
+              loadingRepositoryFile
+            "
+            @click="commitAndPushRepositoryFile"
+          />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+
+    <q-dialog v-model="showDiscardRepositoryFileDialog" persistent>
+      <q-card class="bg-slate-800 text-white" style="width: min(440px, 92vw)">
+        <q-card-section class="row items-center q-pb-none">
+          <q-avatar icon="warning" color="warning" text-color="dark" />
+          <span class="q-ml-sm text-h6">Discard unsaved changes?</span>
+        </q-card-section>
+        <q-card-section class="text-grey-3">
+          Changes to <strong>{{ repositoryFile.path }}</strong> have not been
+          committed. Discard them and close the editor?
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn
+            flat
+            label="Keep Editing"
+            color="grey-4"
+            no-caps
+            v-close-popup
+          />
+          <q-btn
+            unelevated
+            color="negative"
+            icon="delete_outline"
+            label="Discard & Close"
+            no-caps
+            @click="discardRepositoryFileChanges(true)"
+          />
+        </q-card-actions>
+      </q-card>
+    </q-dialog>
+
+    <q-dialog v-model="showPullRequestDiff" maximized>
+      <q-card class="bg-slate-900 text-white column no-wrap">
+        <q-card-section class="row items-center justify-between q-pb-sm">
+          <div>
+            <div class="text-h6 text-weight-bold">Merge Code</div>
+            <div class="text-caption text-grey-4">
+              PR #{{ selectedPr?.number }} · {{ selectedPr?.title }}
+            </div>
+          </div>
+          <q-btn
+            flat
+            round
+            dense
+            icon="close"
+            aria-label="Close merge code"
+            v-close-popup
+          />
+        </q-card-section>
+        <q-separator dark />
+        <div class="row col no-wrap diff-browser">
+          <q-list dark separator class="diff-file-list">
+            <q-item
+              v-for="file in pullRequestDiffFiles"
+              :key="file.path"
+              clickable
+              :active="selectedDiffFile?.path === file.path"
+              active-class="bg-blue-grey-9"
+              @click="selectedDiffFile = file"
+            >
+              <q-item-section avatar>
+                <q-icon name="description" color="grey-4" />
+              </q-item-section>
+              <q-item-section>
+                <q-item-label class="text-caption text-weight-medium">
+                  {{ file.path }}
+                </q-item-label>
+                <q-item-label caption>
+                  <span class="text-positive">+{{ file.additions }}</span>
+                  <span class="q-ml-sm text-negative"
+                    >-{{ file.deletions }}</span
+                  >
+                </q-item-label>
+              </q-item-section>
+            </q-item>
+            <q-item v-if="loadingPullRequestDiff">
+              <q-item-section avatar
+                ><q-spinner color="primary"
+              /></q-item-section>
+              <q-item-section>Loading merge code...</q-item-section>
+            </q-item>
+            <q-item
+              v-else-if="!pullRequestDiffFiles.length"
+              class="text-grey-5"
+            >
+              <q-item-section>No diff files are available.</q-item-section>
+            </q-item>
+          </q-list>
+          <q-scroll-area class="col diff-code-pane">
+            <pre v-if="selectedDiffFile?.patch" class="diff-code">{{
+              selectedDiffFile.patch
+            }}</pre>
+            <div v-else class="text-grey-5 text-center q-pa-xl">
+              Select a changed file to view its diff.
+            </div>
+          </q-scroll-area>
+        </div>
+      </q-card>
+    </q-dialog>
+
+    <q-dialog v-model="showRevertPullRequestDialog" persistent>
+      <q-card class="bg-slate-800 text-white" style="width: min(460px, 92vw)">
+        <q-card-section class="row items-center q-pb-none">
+          <q-avatar icon="history" color="negative" text-color="white" />
+          <span class="q-ml-sm text-h6">Apply Rollback</span>
+        </q-card-section>
+        <q-card-section class="text-grey-3">
+          Create a new revert commit for merged PR
+          <strong>#{{ selectedPr?.number }}</strong>
+          <em>{{ selectedPr?.title }}</em> in
+          <strong>{{ config.repository }}</strong
+          >?
+          <div class="text-caption text-amber q-mt-md">
+            This adds a new commit to the target branch. Existing history is
+            preserved.
+          </div>
+        </q-card-section>
+        <q-card-actions align="right">
+          <q-btn
+            flat
+            label="Cancel"
+            color="grey-5"
+            v-close-popup
+            no-caps
+            :disable="revertingPullRequest"
+          />
+          <q-btn
+            unelevated
+            color="negative"
+            icon="history"
+            label="Confirm Rollback"
+            no-caps
+            :loading="revertingPullRequest"
+            @click="revertMergedPullRequest"
+          />
+        </q-card-actions>
       </q-card>
     </q-dialog>
 
@@ -1426,8 +1721,13 @@ const saving = ref(false)
 const creatingRepository = ref(false)
 const loadingRepositories = ref(false)
 const loadingRepositoryTree = ref(false)
+const loadingRepositoryFile = ref(false)
+const committingRepositoryFile = ref(false)
+const formattingRepositoryFile = ref(false)
 const creatingBranch = ref(false)
 const loadingPrs = ref(false)
+const loadingPullRequestDiff = ref(false)
+const revertingPullRequest = ref(false)
 const reviewingPr = ref(false)
 const merging = ref(false)
 const rejecting = ref(false)
@@ -1436,6 +1736,10 @@ const showGeminiKey = ref(false)
 const showMergeDialog = ref(false)
 const showRejectDialog = ref(false)
 const showRepositoryBrowser = ref(false)
+const showRepositoryFileEditor = ref(false)
+const showDiscardRepositoryFileDialog = ref(false)
+const showPullRequestDiff = ref(false)
+const showRevertPullRequestDialog = ref(false)
 
 // ─── Config ────────────────────────────────────────────────────────────────
 const configFormRef = ref(null)
@@ -1499,7 +1803,30 @@ const repositorySearch = ref('')
 const selectedRepository = ref(null)
 const repositoryTreePath = ref('')
 const repositoryTreeEntries = ref([])
+const repositoryFile = ref({
+  path: '',
+  content: '',
+  originalContent: '',
+  sha: '',
+  branch: '',
+  isNew: false
+})
+const repositoryCommitMessage = ref('')
 const newBranch = ref({ name: '', sourceBranch: 'main' })
+
+const isValidNewPagePath = computed(() => {
+  const path = repositoryFile.value.path.trim().replaceAll('\\', '/')
+  return (
+    path.endsWith('.vue') &&
+    !path.startsWith('/') &&
+    !path.split('/').includes('..') &&
+    !path.split('/').includes('')
+  )
+})
+
+const isRepositoryFileDirty = computed(
+  () => repositoryFile.value.content !== repositoryFile.value.originalContent
+)
 
 const branchRepositoryOptions = computed(() =>
   repositoryItems.value.map(repository => ({
@@ -1543,6 +1870,8 @@ const providerAccessGuidance = computed(() => {
 // ─── Pull Request state ────────────────────────────────────────────────────
 const pullRequests = ref([])
 const selectedPr = ref(null)
+const pullRequestDiffFiles = ref([])
+const selectedDiffFile = ref(null)
 const reviewResult = ref(null)
 const mergeResult = ref(null)
 const rejectResult = ref(null)
@@ -2003,6 +2332,40 @@ const openRepository = async repository => {
   await loadRepositoryTree('')
 }
 
+const startNewRepositoryPage = () => {
+  if (!selectedRepository.value || !config.value.token) {
+    Notify.create({
+      type: 'warning',
+      message: 'Select a repository and connect a provider token first.',
+      position: 'top'
+    })
+    return
+  }
+
+  const currentFolder = repositoryTreePath.value.replace(/^\/+|\/+$/g, '')
+  repositoryFile.value = {
+    path: currentFolder ? `${currentFolder}/NewPage.vue` : 'NewPage.vue',
+    content: [
+      '<template>',
+      '  <q-page class="q-pa-md">',
+      '    <h1>New page</h1>',
+      '  </q-page>',
+      '</template>',
+      '',
+      '<script setup>',
+      '</scr' + 'ipt>',
+      ''
+    ].join('\n'),
+    originalContent: '',
+    sha: '',
+    branch:
+      selectedRepository.value.defaultBranch || config.value.defaultBranch,
+    isNew: true
+  }
+  repositoryCommitMessage.value = ''
+  showRepositoryFileEditor.value = true
+}
+
 const loadRepositoryTree = async path => {
   if (!selectedRepository.value || !config.value.token) return
 
@@ -2061,7 +2424,10 @@ const loadRepositoryTree = async path => {
           path: entryPath,
           name: entry.name || entryPath.split('/').filter(Boolean).at(-1),
           type: isDirectory ? 'tree' : 'blob',
-          size: Number(entry.size) || 0
+          size: Number(entry.size) || 0,
+          content: entry.content ?? entry.decodedContent ?? null,
+          encoding: entry.encoding || 'utf-8',
+          sha: entry.sha || ''
         }
       })
       .filter(entry => entry.path && entry.name)
@@ -2093,8 +2459,275 @@ const loadRepositoryTree = async path => {
 }
 
 const openRepositoryTreeEntry = entry => {
-  if (entry?.type !== 'tree') return
-  loadRepositoryTree(entry.path)
+  if (entry?.type === 'tree') {
+    loadRepositoryTree(entry.path)
+    return
+  }
+  if (entry?.type === 'blob') openRepositoryFile(entry)
+}
+
+const resetRepositoryFileEditor = () => {
+  showRepositoryFileEditor.value = false
+  showDiscardRepositoryFileDialog.value = false
+  repositoryFile.value = {
+    path: '',
+    content: '',
+    originalContent: '',
+    sha: '',
+    branch: '',
+    isNew: false
+  }
+  repositoryCommitMessage.value = ''
+}
+
+const closeRepositoryFileEditor = () => {
+  if (isRepositoryFileDirty.value) {
+    showDiscardRepositoryFileDialog.value = true
+    return
+  }
+  resetRepositoryFileEditor()
+}
+
+const discardRepositoryFileChanges = (closeEditor = false) => {
+  if (closeEditor || repositoryFile.value.isNew) {
+    resetRepositoryFileEditor()
+    return
+  }
+  repositoryFile.value.content = repositoryFile.value.originalContent
+  repositoryCommitMessage.value = ''
+}
+
+const decodeRepositoryFile = (content, encoding) => {
+  if (typeof content !== 'string' || encoding !== 'base64') return content || ''
+
+  const binary = atob(content.replace(/\s/g, ''))
+  const bytes = Uint8Array.from(binary, character => character.charCodeAt(0))
+  return new TextDecoder().decode(bytes)
+}
+
+const openRepositoryFile = async entry => {
+  if (!selectedRepository.value || !config.value.token) return
+  if (isRepositoryFileDirty.value) {
+    Notify.create({
+      type: 'warning',
+      message:
+        'Commit or discard the current edits before opening another file.',
+      position: 'top'
+    })
+    return
+  }
+
+  repositoryFile.value = {
+    path: entry.path,
+    content: '',
+    originalContent: '',
+    sha: entry.sha || '',
+    branch:
+      selectedRepository.value.defaultBranch || config.value.defaultBranch,
+    isNew: false
+  }
+  repositoryCommitMessage.value = ''
+  showRepositoryFileEditor.value = true
+
+  try {
+    loadingRepositoryFile.value = true
+    let fileData = entry.content
+    let encoding = entry.encoding
+    let sha = entry.sha
+
+    if (typeof fileData !== 'string') {
+      const { data } = await api.post('/users/git/repository/file', {
+        userId: config.value.userId,
+        provider: config.value.provider,
+        hostUrl: config.value.hostUrl,
+        gitToken: config.value.token,
+        repoPath: selectedRepository.value.path,
+        branch: repositoryFile.value.branch,
+        path: entry.path
+      })
+      if (data?.success === false) {
+        throw new Error(data?.error || 'Failed to load repository file.')
+      }
+      const response = data?.file || data?.data || data
+      fileData = response?.content ?? response?.fileContent ?? ''
+      encoding = response?.encoding || encoding
+      sha = response?.sha || sha
+    }
+
+    const content = decodeRepositoryFile(fileData, encoding)
+    repositoryFile.value = {
+      ...repositoryFile.value,
+      content,
+      originalContent: content,
+      sha: sha || ''
+    }
+  } catch (error) {
+    showRepositoryFileEditor.value = false
+    Notify.create({
+      type: 'negative',
+      message:
+        error.response?.data?.message ||
+        error.response?.data?.error ||
+        error.message ||
+        'Failed to load repository file.',
+      position: 'top'
+    })
+  } finally {
+    loadingRepositoryFile.value = false
+  }
+}
+
+const formatRepositoryFile = async () => {
+  const extension = repositoryFile.value.path.split('.').at(-1)?.toLowerCase()
+  const parserByExtension = {
+    vue: 'vue',
+    js: 'babel',
+    jsx: 'babel',
+    mjs: 'babel',
+    cjs: 'babel',
+    ts: 'typescript',
+    tsx: 'typescript',
+    json: 'json',
+    html: 'html',
+    css: 'css',
+    scss: 'scss',
+    md: 'markdown',
+    yaml: 'yaml',
+    yml: 'yaml'
+  }
+  const parser = parserByExtension[extension]
+  if (!parser) {
+    Notify.create({
+      type: 'warning',
+      message: `Formatting is not configured for .${extension || 'unknown'} files.`,
+      position: 'top'
+    })
+    return
+  }
+
+  try {
+    formattingRepositoryFile.value = true
+    const prettier = await import('prettier/standalone')
+    const pluginImports = {
+      vue: () => import('prettier/plugins/html'),
+      babel: () =>
+        Promise.all([
+          import('prettier/plugins/babel'),
+          import('prettier/plugins/estree')
+        ]),
+      typescript: () => import('prettier/plugins/typescript'),
+      json: () =>
+        Promise.all([
+          import('prettier/plugins/babel'),
+          import('prettier/plugins/estree')
+        ]),
+      html: () => import('prettier/plugins/html'),
+      css: () => import('prettier/plugins/postcss'),
+      scss: () => import('prettier/plugins/postcss'),
+      markdown: () => import('prettier/plugins/markdown'),
+      yaml: () => import('prettier/plugins/yaml')
+    }
+    const importedPlugins = await pluginImports[parser]()
+    repositoryFile.value.content = await prettier.format(
+      repositoryFile.value.content,
+      {
+        filepath: repositoryFile.value.path,
+        parser,
+        plugins: Array.isArray(importedPlugins)
+          ? importedPlugins
+          : [importedPlugins],
+        semi: false,
+        singleQuote: true,
+        tabWidth: 2
+      }
+    )
+    Notify.create({
+      type: 'positive',
+      message: 'Code formatted.',
+      position: 'top'
+    })
+  } catch (error) {
+    Notify.create({
+      type: 'negative',
+      message: error.message || 'Could not format this file.',
+      position: 'top'
+    })
+  } finally {
+    formattingRepositoryFile.value = false
+  }
+}
+
+const commitAndPushRepositoryFile = async () => {
+  if (!isRepositoryFileDirty.value) return
+  if (repositoryFile.value.isNew && !isValidNewPagePath.value) {
+    Notify.create({
+      type: 'warning',
+      message: 'Enter a valid repository-relative .vue page path.',
+      position: 'top'
+    })
+    return
+  }
+  if (!repositoryCommitMessage.value.trim()) {
+    Notify.create({
+      type: 'warning',
+      message: 'Enter a commit message before pushing.',
+      position: 'top'
+    })
+    return
+  }
+
+  try {
+    committingRepositoryFile.value = true
+    const { data } = await api.post('/users/git/repository/commit-push', {
+      userId: config.value.userId,
+      provider: config.value.provider,
+      hostUrl: config.value.hostUrl,
+      gitToken: config.value.token,
+      repoPath: selectedRepository.value.path,
+      branch: repositoryFile.value.branch,
+      path: repositoryFile.value.path.trim(),
+      content: repositoryFile.value.content,
+      commitMessage: repositoryCommitMessage.value.trim(),
+      sha: repositoryFile.value.isNew ? undefined : repositoryFile.value.sha,
+      isNewFile: repositoryFile.value.isNew,
+      operation: repositoryFile.value.isNew ? 'create' : 'update'
+    })
+    if (data?.success === false) {
+      throw new Error(data?.error || 'Commit and push failed.')
+    }
+
+    repositoryFile.value.originalContent = repositoryFile.value.content
+    repositoryFile.value.sha =
+      data?.sha || data?.commit?.sha || repositoryFile.value.sha
+    repositoryFile.value.isNew = false
+    repositoryCommitMessage.value = ''
+    const updatedAt = data?.updatedAt || new Date().toISOString()
+    selectedRepository.value.updatedAt = updatedAt
+    const repository = repositoryItems.value.find(
+      item => item.path === selectedRepository.value.path
+    )
+    if (repository) repository.updatedAt = updatedAt
+    Notify.create({
+      type: 'positive',
+      message:
+        data?.message || `${repositoryFile.value.path} committed and pushed.`,
+      timeout: 5000,
+      position: 'top'
+    })
+    await loadRepositoryTree(repositoryTreePath.value)
+  } catch (error) {
+    Notify.create({
+      type: 'negative',
+      message:
+        error.response?.data?.message ||
+        error.response?.data?.error ||
+        error.message ||
+        'Commit and push failed.',
+      position: 'top'
+    })
+  } finally {
+    committingRepositoryFile.value = false
+  }
 }
 
 // ─── 2. Create Repository ─────────────────────────────────────────────────
@@ -2272,6 +2905,121 @@ const fetchPullRequests = async () => {
     })
   } finally {
     loadingPrs.value = false
+  }
+}
+
+const loadPullRequestDiff = async () => {
+  if (!selectedPr.value) return
+
+  try {
+    loadingPullRequestDiff.value = true
+    const { data } = await api.post('/users/git/pull-request-diff', {
+      userId: config.value.userId,
+      provider: config.value.provider,
+      hostUrl: config.value.hostUrl,
+      gitToken: config.value.token,
+      repoPath: config.value.repository?.trim(),
+      pullNumber: selectedPr.value.number
+    })
+    if (data?.success === false) {
+      throw new Error(data?.error || 'Failed to load pull request diff.')
+    }
+
+    const files = Array.isArray(data)
+      ? data
+      : (data?.files ??
+        data?.diffFiles ??
+        data?.data?.files ??
+        data?.data?.diffFiles ??
+        [])
+    if (Array.isArray(files) && files.length) {
+      pullRequestDiffFiles.value = files.map((file, index) => ({
+        path:
+          file?.filename ||
+          file?.fileName ||
+          file?.path ||
+          (typeof file === 'string' ? file : `Changed file ${index + 1}`),
+        patch:
+          file?.patch || file?.diff || file?.content || file?.changes || '',
+        additions: Number(file?.additions) || 0,
+        deletions: Number(file?.deletions) || 0
+      }))
+    } else {
+      const patch =
+        data?.diff || data?.patch || data?.data?.diff || data?.data?.patch || ''
+      pullRequestDiffFiles.value = patch
+        ? [
+            {
+              path: `PR-${selectedPr.value.number}.diff`,
+              patch: String(patch),
+              additions: 0,
+              deletions: 0
+            }
+          ]
+        : []
+    }
+
+    selectedDiffFile.value = pullRequestDiffFiles.value[0] ?? null
+    showPullRequestDiff.value = true
+  } catch (error) {
+    Notify.create({
+      type: 'negative',
+      message:
+        error.response?.data?.message ||
+        error.response?.data?.error ||
+        error.message ||
+        'Failed to load pull request diff.',
+      position: 'top'
+    })
+  } finally {
+    loadingPullRequestDiff.value = false
+  }
+}
+
+const confirmRevertPullRequest = () => {
+  if (selectedPr.value?.status !== 'merged') return
+  showRevertPullRequestDialog.value = true
+}
+
+const revertMergedPullRequest = async () => {
+  if (selectedPr.value?.status !== 'merged') return
+
+  try {
+    revertingPullRequest.value = true
+    const { data } = await api.post('/users/git/revert-pr', {
+      userId: config.value.userId,
+      provider: config.value.provider,
+      hostUrl: config.value.hostUrl,
+      gitToken: config.value.token,
+      repoPath: config.value.repository?.trim(),
+      pullNumber: selectedPr.value.number
+    })
+    if (data?.success === false) {
+      throw new Error(data?.error || 'Rollback failed.')
+    }
+
+    showRevertPullRequestDialog.value = false
+    Notify.create({
+      type: 'positive',
+      message:
+        data?.message ||
+        `Rollback commit created for PR #${selectedPr.value.number}.`,
+      timeout: 5000,
+      position: 'top'
+    })
+    await fetchPullRequests()
+  } catch (error) {
+    Notify.create({
+      type: 'negative',
+      message:
+        error.response?.data?.message ||
+        error.response?.data?.error ||
+        error.message ||
+        'Rollback failed.',
+      position: 'top'
+    })
+  } finally {
+    revertingPullRequest.value = false
   }
 }
 
@@ -2472,6 +3220,53 @@ onMounted(() => {
   justify-content: center;
   padding: 32px;
   text-align: center;
+}
+.diff-browser {
+  flex: 1;
+  min-height: 0;
+}
+.diff-file-list {
+  width: min(360px, 34vw);
+  overflow-y: auto;
+}
+.diff-code-pane {
+  height: calc(100vh - 88px);
+  min-width: 0;
+  background: #111827;
+}
+.diff-code {
+  min-width: 100%;
+  margin: 0;
+  padding: 20px 24px;
+  color: #d1d5db;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 12px;
+  line-height: 1.7;
+  white-space: pre;
+}
+.source-editor-input {
+  width: 100%;
+  min-height: 58vh;
+  resize: vertical;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+  outline: none;
+  padding: 16px;
+  background: #111827;
+  color: #e5e7eb;
+  font-family: 'Cascadia Code', Consolas, 'Courier New', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  tab-size: 2;
+  white-space: pre;
+  overflow: auto;
+}
+.source-editor-input:focus {
+  border-color: #60a5fa;
+  box-shadow: 0 0 0 1px #60a5fa;
+}
+.source-editor-input:disabled {
+  opacity: 0.65;
 }
 .repository-list-scroll {
   max-height: 360px;
