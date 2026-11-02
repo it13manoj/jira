@@ -3,9 +3,9 @@
     <!-- Header -->
     <div class="row items-center justify-between q-mb-lg">
       <div>
-        <h1 class="text-h4 text-weight-bold q-ma-none text-white"
-          >Create Project</h1
-        >
+        <h1 class="text-h4 text-weight-bold q-ma-none text-white">{{
+          isEditing ? 'Edit Project' : 'Create Project'
+        }}</h1>
         <p class="text-caption text-grey-4 q-mb-none"
           >Configure your project details, workflow, and access lead.</p
         >
@@ -87,6 +87,7 @@
               dense
               emit-value
               map-options
+              :rules="[val => !!val || 'Project type is required']"
               class="custom-field"
             />
           </div>
@@ -104,6 +105,7 @@
               dense
               emit-value
               map-options
+              :rules="[val => !!val || 'Template is required']"
               class="custom-field"
             />
           </div>
@@ -123,6 +125,7 @@
               dense
               emit-value
               map-options
+              :rules="[val => !!val || 'Project lead is required']"
               class="custom-field"
             >
               <template v-slot:option="scope">
@@ -264,7 +267,7 @@
         <div class="row justify-end q-gutter-x-sm q-mt-lg">
           <q-btn flat dark label="Cancel" to="/projects" no-caps />
           <q-btn
-            label="Create Project"
+            :label="isEditing ? 'Save Changes' : 'Create Project'"
             type="submit"
             color="primary"
             class="rounded-btn text-weight-bold"
@@ -278,13 +281,15 @@
 </template>
 
 <script setup>
-import { reactive, ref, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, reactive, ref, onMounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { Notify } from 'quasar'
 import { api } from '@/boot/axios'
 
 const router = useRouter()
+const route = useRoute()
 const loading = ref(false)
+const isEditing = computed(() => Boolean(route.params.id))
 
 const permissions = ref([])
 const stages = ref([])
@@ -299,6 +304,9 @@ const form = reactive({
   defaultAssignee: '',
   category: '',
   access: '',
+  stage: '',
+  priority: '',
+  permission: '',
   description: ''
 })
 
@@ -321,11 +329,11 @@ const generateProjectKey = val => {
 }
 
 // Jira Dropdown Options
-const typeOptions = ref([{ label: 'Select Project Type', value: '' }])
+const typeOptions = ref([])
 
-const templateOptions = ref([{ label: 'Select Template', value: '' }])
+const templateOptions = ref([])
 
-const categoryOptions = ref([{ label: 'Select Category', value: '' }])
+const categoryOptions = ref([])
 
 const accessOptions = [
   { label: 'Private (Restricted Access)', value: true },
@@ -337,151 +345,185 @@ const assigneeOptions = [
   { label: 'Unassigned', value: 'unassigned' }
 ]
 
-const userOptions = ref([{ label: 'Select Lead', value: '' }])
+const userOptions = ref([])
+
+const getId = item => item?.Id ?? item?.id ?? item?.ID ?? ''
+const getItems = data => {
+  const items = Array.isArray(data) ? data : data?.data
+  if (!Array.isArray(items)) {
+    throw new Error('The server returned an invalid options response')
+  }
+  return items
+}
+const toOption = (item, label) => ({
+  label: label(item),
+  value: getId(item)
+})
 
 const projectTypes = async () => {
   try {
-    const response = await api.get('/users/project-type/find')
-    typeOptions.value.push(
-      ...response.data.map(type => ({
-        label: type.typeName,
-        value: type.Id
-      }))
+    const { data } = await api.get('/users/project-type/find')
+    typeOptions.value = getItems(data).map(type =>
+      toOption(type, item => item.typeName)
     )
-    console.log('Fetched Project Types:', typeOptions.value)
   } catch (error) {
     console.error('Failed to fetch project types:', error)
-    return []
+    throw error
   }
 }
 
 const templatesOptions = async () => {
   try {
-    const response = await api.get('/users/template/find')
-    templateOptions.value.push(
-      ...response.data.map(template => ({
-        label: template.templateName,
-        value: template.id
-      }))
+    const { data } = await api.get('/users/template/find')
+    templateOptions.value = getItems(data).map(template =>
+      toOption(template, item => item.templateName)
     )
-    console.log('Fetched Project Templates:', templateOptions.value)
   } catch (error) {
     console.error('Failed to fetch project templates:', error)
-    return []
+    throw error
   }
 }
 
 const leadsOptions = async () => {
   try {
-    const response = await api.get('/users')
-    userOptions.value.push(
-      ...response.data.map(lead => ({
-        label: lead.username,
-        value: lead.Id
-      }))
+    const { data } = await api.get('/users')
+    userOptions.value = getItems(data).map(lead =>
+      toOption(lead, item => item.username)
     )
-    console.log('Fetched Project Leads:', userOptions.value)
   } catch (error) {
     console.error('Failed to fetch project leads:', error)
-    return []
+    throw error
   }
 }
 
 const categoriesOptions = async () => {
   try {
-    const response = await api.get('/users/categories/find')
-    categoryOptions.value.push(
-      ...response.data.map(category => ({
-        label: category.categoryName,
-        value: category.Id
-      }))
+    const { data } = await api.get('/users/categories/find')
+    categoryOptions.value = getItems(data).map(category =>
+      toOption(category, item => item.categoryName)
     )
-    console.log('Fetched Project Categories:', categoryOptions.value)
   } catch (error) {
     console.error('Failed to fetch project categories:', error)
-    return []
+    throw error
   }
 }
 
-onMounted(async () => {
-  const types = await projectTypes()
-  const templates = await templatesOptions()
-  const leads = await leadsOptions()
-  const categories = await categoriesOptions()
-})
-
-const fetchDate = async () => {
+const fetchOptions = async () => {
   try {
-    const response = await api.get('/users/permission/find')
-    permissions.value = response.data.map(item => ({
-      value: item.Id,
-      label: item.permissions
-    }))
-    permissions.value = permissions.value.sort((a, b) =>
-      a.label.localeCompare(b.label)
-    )
-
-    const stagesResponse = await api.get('/users/stage/find')
-    stages.value = stagesResponse.data.map(item => ({
-      value: item.Id,
-      label: item.stagesName
-    }))
-
-    stages.value = stages.value.sort((a, b) => a.order - b.order)
-
-    const prioritiesResponse = await api.get('/users/priority/find')
-    priorities.value = prioritiesResponse.data.map(item => ({
-      value: item.Id,
-      label: item.priority
-    }))
-    priorities.value = priorities.value.sort((a, b) => a.level - b.level)
+    const [permissionResponse, stageResponse, priorityResponse] =
+      await Promise.all([
+        api.get('/users/permission/find'),
+        api.get('/users/stage/find'),
+        api.get('/users/priority/find'),
+        projectTypes(),
+        templatesOptions(),
+        leadsOptions(),
+        categoriesOptions()
+      ])
+    permissions.value = getItems(permissionResponse.data)
+      .map(item => toOption(item, value => value.permissions))
+      .sort((a, b) => a.label.localeCompare(b.label))
+    stages.value = getItems(stageResponse.data)
+      .map(item => toOption(item, value => value.stagesName))
+      .sort((a, b) => a.label.localeCompare(b.label))
+    priorities.value = getItems(priorityResponse.data)
+      .map(item => toOption(item, value => value.priority))
+      .sort((a, b) => a.label.localeCompare(b.label))
   } catch (error) {
-    console.error('Error fetching data:', error)
+    console.error('Failed to fetch project form options:', error)
+    throw error
   }
 }
 
+const relationId = value => {
+  if (value === null || value === undefined || value === '') return ''
+  const numericValue = Number(value)
+  return Number.isNaN(numericValue) ? value : numericValue
+}
+
+const relation = value => (value === '' ? null : { Id: relationId(value) })
+const templateRelation = value =>
+  value === '' ? null : { id: relationId(value) }
+const nestedId = value => relationId(value?.Id ?? value?.id ?? value)
+
+const loadProject = async () => {
+  const { data } = await api.get('/users/projects/find')
+  const projects = getItems(data)
+  const project = projects.find(
+    item => String(getId(item)) === String(route.params.id)
+  )
+
+  if (!project) {
+    throw new Error('Project not found')
+  }
+
+  form.name = project.projectName ?? ''
+  form.key = project.projectKey ?? ''
+  form.type = nestedId(project.projectTypes)
+  form.template = nestedId(project.template)
+  form.lead = nestedId(project.leads)
+  form.defaultAssignee = project.assignee ?? ''
+  form.category = nestedId(project.categories)
+  const accessLevel = project.accessLevel ?? project.isRestricted
+  form.access = accessLevel === true || accessLevel === 'true'
+  form.stage = nestedId(project.stages)
+  form.priority = nestedId(project.Priority ?? project.priority)
+  form.permission = nestedId(project.permission)
+  form.description = project.description ?? ''
+}
+
 onMounted(async () => {
-  await fetchDate()
+  loading.value = true
+  try {
+    await fetchOptions()
+    if (isEditing.value) await loadProject()
+  } catch (error) {
+    console.error('Failed to initialize project form:', error)
+    Notify.create({
+      type: 'negative',
+      message:
+        error.response?.data?.message ||
+        error.message ||
+        'Failed to load project form'
+    })
+  } finally {
+    loading.value = false
+  }
 })
 
 const handleSubmit = async () => {
+  if (loading.value) return
   loading.value = true
   try {
     const payload = {
       projectName: form.name,
       projectKey: form.key,
-      projectTypes: {
-        Id: Number(form.type)
-      },
-      template: {
-        id: Number(form.template) // Match the exact ID field capitalization used by your Template entity
-      },
-      leads: {
-        Id: Number(form.lead)
-      },
+      projectTypes: relation(form.type),
+      template: templateRelation(form.template),
+      leads: relation(form.lead),
       assignee: form.defaultAssignee,
-      accessLevel: Boolean(form.access),
-      categories: {
-        Id: Number(form.category)
-      },
-      permission: {
-        Id: Number(form.permission)
-      },
-      Priority: {
-        Id: Number(form.priority)
-      },
-      stages: {
-        Id: Number(form.stage)
-      },
+      accessLevel: form.access,
+      categories: relation(form.category),
+      permission: relation(form.permission),
+      Priority: relation(form.priority),
+      stages: relation(form.stage),
       description: form.description
     }
 
-    // ✅ CORRECT: Pass payload directly
-    const response = await api.post('/users/projects/create', payload)
+    if (isEditing.value) {
+      await api.put(`/users/projects/update/${route.params.id}`, {
+        ...payload,
+        Id: relationId(route.params.id)
+      })
+    } else {
+      await api.post('/users/projects/create', payload)
+    }
 
     Notify.create({
       type: 'positive',
-      message: `Project "${form.name}" (${form.key}) created successfully!`,
+      message: isEditing.value
+        ? `Project "${form.name}" updated successfully`
+        : `Project "${form.name}" (${form.key}) created successfully`,
       position: 'top'
     })
 

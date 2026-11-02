@@ -40,6 +40,10 @@ const routes = [
         component: () => import('@/pages/AddProjectPage.vue')
       },
       {
+        path: '/projects/:id/edit',
+        component: () => import('@/pages/AddProjectPage.vue')
+      },
+      {
         path: '/view/tasks',
         component: () => import('@/pages/TaskListBoard.vue')
       },

@@ -136,6 +136,7 @@
         :rows="filteredProjects"
         :columns="columns"
         row-key="id"
+        :loading="loading"
         :grid="$q.screen.lt.md"
         class="bg-transparent text-grey-3 projects-table"
         :pagination="{ rowsPerPage: 10 }"
@@ -214,6 +215,26 @@
                   size="sm"
                   no-caps
                   @click="viewProject(props.row.id)"
+                />
+                <q-btn
+                  flat
+                  dense
+                  icon="edit"
+                  label="Edit"
+                  color="warning"
+                  size="sm"
+                  no-caps
+                  @click="editProject(props.row.id)"
+                />
+                <q-btn
+                  flat
+                  dense
+                  icon="delete"
+                  label="Delete"
+                  color="negative"
+                  size="sm"
+                  no-caps
+                  @click="deleteProject(props.row)"
                 />
               </q-card-actions>
             </q-card>
@@ -697,12 +718,16 @@ const showTaskModal = ref(false)
 const activeProject = ref(null)
 const loading = ref(false)
 
-const categoryFilterOptions = [
-  { label: 'All Categories', value: 'all' },
-  { label: 'Web Development', value: 'Web Development' },
-  { label: 'Mobile Apps', value: 'Mobile Apps' },
-  { label: 'DevOps & Cloud', value: 'DevOps & Cloud' }
-]
+const categoryFilterOptions = computed(() =>
+  [
+    { label: 'All Categories', value: 'all' },
+    ...new Set(projects.value.map(project => project.category))
+  ].map(category =>
+    typeof category === 'string'
+      ? { label: category, value: category }
+      : category
+  )
+)
 
 const teamMembers = [
   { label: 'John Doe (Backend)', value: 'John Doe' },
@@ -776,18 +801,49 @@ const fetchProjects = async () => {
   loading.value = true
   try {
     const response = await api.get('/users/projects/find')
-    const rawData = response.data || []
+    const rawData = Array.isArray(response.data)
+      ? response.data
+      : response.data?.data
+    if (!Array.isArray(rawData)) {
+      throw new Error('The server returned an invalid project list')
+    }
 
     projects.value = rawData.map(item => ({
-      id: item.Id ?? item.Id,
+      id: item.Id ?? item.id ?? item.ID,
       key: item.projectKey || 'N/A',
       name: item.projectName || 'Untitled Project',
-      template: item.template?.name || 'Scrum',
+      template:
+        item.template?.templateName || item.template?.name || 'No template',
       category: item.categories?.categoryName || 'Uncategorized',
-      lead: item.leads?.username || item.assignee || 'Unassigned',
+      lead:
+        item.leads?.username ||
+        (typeof item.assignee === 'string'
+          ? item.assignee
+          : item.assignee?.username) ||
+        'Unassigned',
       progress: item.progress ?? 0,
-      status: item.isRestricted ? 'In Progress' : 'Active',
-      tasks: Array.isArray(item.tasks) ? item.tasks : []
+      status:
+        item.status ||
+        item.stages?.stagesName ||
+        item.stages?.name ||
+        (item.isCompleted ? 'Completed' : 'Active'),
+      tasks: Array.isArray(item.tasks)
+        ? item.tasks.map(task => ({
+            ...task,
+            id: task.Id ?? task.id,
+            title:
+              task.Summary ?? task.summary ?? task.title ?? 'Untitled task',
+            assignee: (() => {
+              const assignee =
+                task.assignTo?.username ??
+                task.assignee?.username ??
+                task.assignee ??
+                task.assignTo
+              return typeof assignee === 'string' ? assignee : 'Unassigned'
+            })(),
+            status: task.stages?.stagesName ?? task.status ?? 'To Do'
+          }))
+        : []
     }))
   } catch (error) {
     console.error('Failed to load projects:', error)
@@ -989,7 +1045,7 @@ const removeTask = (projectId, taskId) => {
   }
 }
 
-const viewProject = id => router.push(`/projects/${id}`)
+const viewProject = id => router.push(`/projects/${id}/edit`)
 const editProject = id => router.push(`/projects/${id}/edit`)
 
 const deleteProject = project => {
@@ -999,9 +1055,21 @@ const deleteProject = project => {
     message: `Are you sure you want to delete "${project.name}"?`,
     cancel: true,
     persistent: true
-  }).onOk(() => {
-    projects.value = projects.value.filter(p => p.id !== project.id)
-    Notify.create({ type: 'positive', message: 'Project deleted successfully' })
+  }).onOk(async () => {
+    try {
+      await api.delete(`/users/projects/delete/${project.id}`)
+      projects.value = projects.value.filter(p => p.id !== project.id)
+      Notify.create({
+        type: 'positive',
+        message: 'Project deleted successfully'
+      })
+    } catch (error) {
+      console.error('Failed to delete project:', error)
+      Notify.create({
+        type: 'negative',
+        message: error.response?.data?.message || 'Failed to delete project'
+      })
+    }
   })
 }
 </script>
